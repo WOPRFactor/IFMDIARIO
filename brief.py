@@ -604,7 +604,7 @@ def md_to_basic_html(md):
 def send_email(subject, md_body):
     """Envia el informe por email usando SMTP (config por env vars)."""
     host = os.environ.get("SMTP_HOST")
-    port = int(os.environ.get("SMTP_PORT", "587"))
+    port = int(os.environ.get("SMTP_PORT") or "587")
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASS")
     mail_from = os.environ.get("MAIL_FROM", user)
