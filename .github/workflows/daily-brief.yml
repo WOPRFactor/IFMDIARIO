@@ -6,9 +6,23 @@ on:
     - cron: "0 11 * * *"
   workflow_dispatch:  # permite ejecutarlo a mano desde la pestana Actions
 
+# Permisos necesarios para publicar la pagina en GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Evita corridas pisandose entre si
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  build-and-send:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,22 +33,33 @@ jobs:
           python-version: "3.12"
 
       # El script usa solo libreria estandar de Python, no hay dependencias.
-      - name: Generar y enviar informe
+      - name: Generar informe y pagina web
         env:
+          # --- Email (opcional) ---
+          # Si NO cargas estos secrets, el envio por mail se saltea y la pagina
+          # web se publica igual. Quita --email abajo si no queres mail nunca.
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-          # Opcional: si cargas este secret, el informe usa Claude para destacar
-          # y resumir lo mas importante. Si no esta, corre en modo simple igual.
+          # --- IA (opcional) ---
+          # Si cargas este secret, el informe destaca y resume lo mas importante.
+          # Si no esta, corre en modo simple igual.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python3 brief.py --email --out brief.md
+        run: |
+          mkdir -p _site
+          python3 brief.py --email --out brief.md --html _site/index.html
 
-      - name: Guardar informe como artifact
-        uses: actions/upload-artifact@v4
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir artefacto de la pagina
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: ai-daily-brief
-          path: brief.md
-          retention-days: 30
+          path: _site
+
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
