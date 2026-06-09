@@ -396,6 +396,185 @@ def build_markdown(items, errors, highlight_md=None):
     return "\n".join(lines)
 
 
+def build_html_page(items, errors, highlight_md=None):
+    """Genera una pagina HTML completa y autocontenida para publicar en la web.
+
+    A diferencia de md_to_basic_html (pensada para el cuerpo del email), esta
+    arma un documento con estilos propios, pensado como briefing ejecutivo.
+    """
+    today_h = dt.datetime.now().strftime("%d/%m/%Y")
+    gen_h = dt.datetime.now().strftime("%H:%M")
+    order = ["Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
+    titles = {
+        "Regulacion": "Regulacion y leyes",
+        "Gobierno IA": "Gobierno de IA",
+        "Vulnerabilidades": "Vulnerabilidades y seguridad",
+        "Tecnologia": "Tecnologia y mercado",
+    }
+    # color de acento por categoria (sobrio, no semaforo chillon)
+    cat_color = {
+        "Regulacion": "#3b5bdb",
+        "Gobierno IA": "#0c8599",
+        "Vulnerabilidades": "#c92a2a",
+        "Tecnologia": "#5f3dc4",
+    }
+
+    def esc(s):
+        return html.escape(s or "")
+
+    parts = []
+    # --- Resumen ejecutivo (destacado) ---
+    if highlight_md:
+        modo = "Seleccion y analisis por IA"
+        hi_html = []
+        for line in highlight_md.split("\n"):
+            line = line.strip()
+            m = re.match(r"- \*\*\[(.+?)\]\*\* (.+?)\s*$", line)
+            if m:
+                hi_html.append(
+                    f'<li><span class="tag" style="--c:{cat_color.get(m.group(1), "#555")}">'
+                    f'{esc(m.group(1))}</span> {esc(m.group(2))}'
+                )
+            elif line.startswith("_") and line.endswith("_"):
+                hi_html.append(f'<div class="why">{esc(line.strip("_ "))}</div>')
+            elif line.startswith("[Leer mas]"):
+                mm = re.search(r"\((.+?)\)", line)
+                if mm:
+                    hi_html.append(
+                        f'<a class="more" href="{esc(mm.group(1))}" '
+                        f'target="_blank" rel="noopener">Leer mas &rarr;</a></li>'
+                    )
+        highlight_html = "<ul class='highlights'>" + "\n".join(hi_html) + "</ul>"
+    else:
+        modo = "Seleccion automatica por categoria"
+        priority = ["Regulacion", "Vulnerabilidades", "Gobierno IA", "Tecnologia"]
+        exec_items = [it for cat in priority for it in items if it["category"] == cat][:5]
+        if exec_items:
+            lis = []
+            for it in exec_items:
+                lis.append(
+                    f'<li><span class="tag" style="--c:{cat_color.get(it["category"], "#555")}">'
+                    f'{esc(it["category"])}</span> {esc(it["title"])} '
+                    f'<a class="more" href="{esc(it["link"])}" target="_blank" '
+                    f'rel="noopener">Leer mas &rarr;</a></li>'
+                )
+            highlight_html = "<ul class='highlights'>" + "\n".join(lis) + "</ul>"
+        else:
+            highlight_html = "<p class='empty'>Sin novedades en la ventana de tiempo.</p>"
+
+    # --- Secciones por categoria ---
+    sections = []
+    for cat in order:
+        cat_items = [it for it in items if it["category"] == cat]
+        if not cat_items:
+            continue
+        cards = []
+        for it in cat_items:
+            date_str = it["date"].strftime("%d/%m %H:%M") if it["date"] else "s/f"
+            summ = f'<p class="summary">{esc(it["summary"])}</p>' if it["summary"] else ""
+            cards.append(
+                f'<article class="card">'
+                f'<h3><a href="{esc(it["link"])}" target="_blank" rel="noopener">{esc(it["title"])}</a></h3>'
+                f'<div class="meta">{esc(it["source"])} &middot; {date_str} UTC</div>'
+                f'{summ}'
+                f'<a class="more" href="{esc(it["link"])}" target="_blank" rel="noopener">Leer la noticia &rarr;</a>'
+                f'</article>'
+            )
+        sections.append(
+            f'<section><h2 style="--c:{cat_color.get(cat, "#555")}">{esc(titles[cat])}'
+            f'<span class="count">{len(cat_items)}</span></h2>'
+            f'<div class="cards">{"".join(cards)}</div></section>'
+        )
+
+    errors_html = ""
+    if errors:
+        err_items = "".join(f"<li>{esc(e)}</li>" for e in errors)
+        errors_html = (
+            f'<details class="errors"><summary>Fuentes con error ({len(errors)})</summary>'
+            f'<ul>{err_items}</ul></details>'
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Daily Brief — {today_h}</title>
+<style>
+  :root {{
+    --ink: #1a1c23; --muted: #6b7280; --line: #e5e7eb;
+    --bg: #fbfbfd; --card: #ffffff;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }}
+  .wrap {{ max-width: 760px; margin: 0 auto; padding: 48px 22px 80px; }}
+  header {{ border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 32px; }}
+  .eyebrow {{ font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; }}
+  h1 {{ font-size: 34px; margin: 6px 0 4px; letter-spacing: -.02em; }}
+  .sub {{ color: var(--muted); font-size: 14px; }}
+  .exec {{ background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 24px; margin-bottom: 40px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }}
+  .exec h2 {{ font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
+    margin: 0 0 4px; color: var(--ink); }}
+  .exec .mode {{ font-size: 12px; color: var(--muted); margin-bottom: 14px; }}
+  ul.highlights {{ list-style: none; margin: 0; padding: 0; }}
+  ul.highlights li {{ padding: 12px 0; border-top: 1px solid var(--line); }}
+  ul.highlights li:first-child {{ border-top: none; }}
+  .tag {{ display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--c); border: 1px solid var(--c);
+    border-radius: 4px; padding: 1px 7px; margin-right: 8px; vertical-align: middle; }}
+  .why {{ color: var(--muted); font-size: 14px; font-style: italic; margin: 4px 0 4px 2px; }}
+  section {{ margin-bottom: 38px; }}
+  section h2 {{ font-size: 20px; border-left: 4px solid var(--c); padding-left: 12px;
+    margin: 0 0 16px; display: flex; align-items: center; gap: 10px; }}
+  .count {{ font-size: 12px; font-weight: 600; color: var(--muted); background: var(--line);
+    border-radius: 20px; padding: 2px 9px; }}
+  .cards {{ display: grid; gap: 14px; }}
+  .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; }}
+  .card h3 {{ font-size: 16px; margin: 0 0 6px; line-height: 1.4; }}
+  .card h3 a {{ color: var(--ink); text-decoration: none; }}
+  .card h3 a:hover {{ text-decoration: underline; }}
+  .meta {{ font-size: 12px; color: var(--muted); margin-bottom: 8px; }}
+  .summary {{ font-size: 14px; margin: 0 0 10px; color: #374151; }}
+  .more {{ font-size: 13px; font-weight: 600; color: #3b5bdb; text-decoration: none; }}
+  .more:hover {{ text-decoration: underline; }}
+  .empty {{ color: var(--muted); }}
+  .errors {{ margin-top: 30px; font-size: 13px; color: var(--muted); }}
+  .errors summary {{ cursor: pointer; }}
+  footer {{ margin-top: 50px; padding-top: 18px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted); }}
+  @media (prefers-reduced-motion: no-preference) {{
+    .card {{ transition: border-color .15s; }}
+    .card:hover {{ border-color: #cbd2dc; }}
+  }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">AI Daily Brief</div>
+      <h1>Novedades en IA</h1>
+      <div class="sub">{today_h} &middot; generado {gen_h} &middot; ultimas {LOOKBACK_HOURS}h &middot; {len(items)} novedades</div>
+    </header>
+    <div class="exec">
+      <h2>Resumen ejecutivo</h2>
+      <div class="mode">{modo}</div>
+      {highlight_html}
+    </div>
+    {"".join(sections) if sections else "<p class='empty'>Sin novedades relevantes hoy.</p>"}
+    {errors_html}
+    <footer>Generado automaticamente. Cada titulo enlaza a la fuente original.</footer>
+  </div>
+</body>
+</html>"""
+
+
 def md_to_basic_html(md):
     """Conversion minima Markdown -> HTML para el email."""
     out = []
@@ -453,7 +632,9 @@ def send_email(subject, md_body):
 def main():
     parser = argparse.ArgumentParser(description="AI Daily Brief")
     parser.add_argument("--email", action="store_true", help="enviar por email")
-    parser.add_argument("--out", default="brief.md", help="archivo de salida")
+    parser.add_argument("--out", default="brief.md", help="archivo Markdown de salida")
+    parser.add_argument("--html", default="index.html",
+                        help="archivo HTML de salida para la web (GitHub Pages)")
     parser.add_argument("--no-llm", action="store_true",
                         help="forzar modo simple aunque haya API key")
     args = parser.parse_args()
@@ -480,6 +661,12 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(md)
     print(f"Informe escrito en {args.out}", file=sys.stderr)
+
+    # Pagina web para GitHub Pages
+    page = build_html_page(items, errors, highlight_md=highlight_md)
+    with open(args.html, "w", encoding="utf-8") as f:
+        f.write(page)
+    print(f"Pagina web escrita en {args.html}", file=sys.stderr)
 
     if args.email:
         today = dt.datetime.now().strftime("%Y-%m-%d")
