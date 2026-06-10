@@ -1,65 +1,97 @@
-name: AI Daily Brief
+name: Daily Briefs
 
 on:
   schedule:
-    # 11:00 UTC = 08:00 en Argentina (UTC-3). Ajusta si cambias de zona.
+    # 11:00 UTC = 08:00 Argentina (UTC-3).
     - cron: "0 11 * * *"
-  workflow_dispatch:  # permite ejecutarlo a mano desde la pestana Actions
+  workflow_dispatch:
 
-# Permisos necesarios para publicar la pagina en GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Evita corridas pisandose entre si
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  # --- Informe IA & Gobernanza ---
+  brief-ia:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      # El script usa solo libreria estandar de Python, no hay dependencias.
-      - name: Generar informe y pagina web
+      - name: Generar informe IA
         env:
-          # --- Email (opcional) ---
-          # Si NO cargas estos secrets, el envio por mail se saltea y la pagina
-          # web se publica igual. Quita --email abajo si no queres mail nunca.
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-          # --- IA (opcional) ---
-          # Si cargas este secret, el informe destaca y resume lo mas importante.
-          # Si no esta, corre en modo simple igual.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          mkdir -p _site
-          python3 brief.py --out brief.md --html _site/index.html
-
-      - name: Configurar Pages
-        uses: actions/configure-pages@v5
-
-      - name: Subir artefacto de la pagina
-        uses: actions/upload-pages-artifact@v3
+        run: python3 brief.py --email --out brief.md --out-es brief_es.md
+      - uses: actions/upload-artifact@v4
         with:
-          path: _site
+          name: brief-ia
+          path: |
+            brief.md
+            brief_es.md
+          retention-days: 30
 
-      - name: Publicar en GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+  # --- Informe Ciberseguridad ---
+  brief-cyber:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generar informe Cyber
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO_CYBER: ${{ secrets.MAIL_TO_CYBER }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 brief_cyber.py --email --out cyber_brief.md --out-es cyber_brief_es.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brief-cyber
+          path: |
+            cyber_brief.md
+            cyber_brief_es.md
+          retention-days: 30
+
+  # --- Informe GitHub Repos ---
+  brief-github:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generar informe GitHub Repos
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          GITHUB_TOKEN: ${{ secrets.GH_SEARCH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 brief_github.py --email --out github_brief.md --out-es github_brief_es.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brief-github
+          path: |
+            github_brief.md
+            github_brief_es.md
+          retention-days: 30
