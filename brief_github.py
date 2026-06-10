@@ -67,6 +67,12 @@ MAX_PER_SEARCH = 5      # tope de repos por busqueda
 DELAY_BETWEEN_REQUESTS = 7  # segundos entre requests para respetar rate limit
 USER_AGENT = "Mozilla/5.0 (GitHub-Repos-Brief/1.0)"
 
+IMPORTANT_KEYWORDS = [
+    "exploit", "vulnerability", "zero-day", "cve", "malware", "ransomware",
+    "breakthrough", "release", "new model", "state of the art", "sota",
+    "autonomous", "agent framework", "production", "open source",
+]
+
 LLM_MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
 LLM_MAX_OUTPUT_TOKENS = 1500
 
@@ -97,6 +103,48 @@ def github_search(query, pushed_since):
     req = Request(url, headers=headers)
     with urlopen(req, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def translate_batch(texts):
+    if not texts:
+        return texts
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        return texts
+    translator = GoogleTranslator(source="en", target="es")
+    results = []
+    for i in range(0, len(texts), 20):
+        chunk = texts[i:i + 20]
+        try:
+            results.extend(translator.translate_batch(chunk))
+        except Exception:
+            results.extend(chunk)
+    return results
+
+
+def score_repo(repo):
+    score = {"Ciberseguridad": 3, "Agentes": 2, "IA & LLMs": 1}.get(repo["category"], 0)
+    blob = f"{repo['name']} {repo['description']} {' '.join(repo['topics'])}".lower()
+    score += sum(1 for kw in IMPORTANT_KEYWORDS if kw in blob)
+    score += min(repo["stars"] // 500, 3)  # bonus por estrellas (max 3 pts)
+    return score
+
+
+def mark_important(repos, top_n=5):
+    scored = sorted(enumerate(repos), key=lambda x: score_repo(x[1]), reverse=True)
+    top = {i for i, _ in scored[:top_n]}
+    for i, r in enumerate(repos):
+        r["important"] = i in top
+    return repos
+
+
+def add_translations(repos):
+    texts = [r["description"] for r in repos]
+    translated = translate_batch(texts)
+    for r, es in zip(repos, translated):
+        r["description_es"] = es if es and es.strip() != r["description"].strip() else ""
+    return repos
 
 
 def collect():
@@ -358,12 +406,16 @@ def build_markdown(repos, errors, highlight_md=None):
             lines.append(f"### {label}")
             for r in label_repos:
                 topics_str = " · ".join(r["topics"]) if r["topics"] else ""
-                lines.append(f"#### [{r['name']}]({r['url']}) ★{r['stars']:,}")
+                marker = "**[IMPORTANTE]** " if r.get("important") else ""
+                lines.append(f"#### {marker}[{r['name']}]({r['url']}) ★{r['stars']:,}")
                 if r["language"]:
                     lines.append(f"_{r['language']} · actualizado {fmt_date(r['pushed_at'])}_")
                 if r["description"]:
                     lines.append("")
                     lines.append(r["description"])
+                if r.get("description_es"):
+                    lines.append("")
+                    lines.append(f"> **ES:** {r['description_es']}")
                 if topics_str:
                     lines.append("")
                     lines.append(f"`{topics_str}`")
@@ -430,14 +482,17 @@ def build_html_page(repos, errors, highlight_md=None):
             topics_html = "".join(
                 f'<span class="topic">{esc(t)}</span>' for t in r["topics"]
             )
-            desc = f'<p class="summary">{esc(r["description"])}</p>' if r["description"] else ""
+            important_badge = '<span class="badge-imp">IMPORTANTE</span>' if r.get("important") else ""
+            desc_en = f'<p class="summary">{esc(r["description"])}</p>' if r["description"] else ""
+            desc_es = (f'<p class="summary-es"><span class="es-label">ES</span> {esc(r["description_es"])}</p>'
+                       if r.get("description_es") else "")
             lang = f'<span class="lang">{esc(r["language"])}</span>' if r["language"] else ""
             cards.append(
-                f'<article class="card">'
-                f'<h3><a href="{esc(r["url"])}" target="_blank" rel="noopener">{esc(r["name"])}</a>'
+                f'<article class="card{"  card-imp" if r.get("important") else ""}">'
+                f'<h3>{important_badge}<a href="{esc(r["url"])}" target="_blank" rel="noopener">{esc(r["name"])}</a>'
                 f' <span class="stars">★{r["stars"]:,}</span></h3>'
                 f'<div class="meta">{lang} · actualizado {fmt_date(r["pushed_at"])}</div>'
-                f'{desc}'
+                f'{desc_en}{desc_es}'
                 f'<div class="topics">{topics_html}</div>'
                 f'</article>'
             )
@@ -505,7 +560,17 @@ def build_html_page(repos, errors, highlight_md=None):
   .card h3 a:hover {{ text-decoration: underline; }}
   .meta {{ font-size: 12px; color: var(--muted); margin-bottom: 8px; }}
   .lang {{ font-weight: 600; }}
-  .summary {{ font-size: 14px; margin: 0 0 8px; color: #374151; }}
+  .summary {{ font-size: 14px; margin: 0 0 6px; color: #374151; }}
+  .summary-es {{ font-size: 14px; margin: 0 0 8px; color: #0a3b1e;
+    background: #f0fff4; border-left: 3px solid #2b8a3e;
+    padding: 6px 10px; border-radius: 0 6px 6px 0; }}
+  .es-label {{ font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    color: #2b8a3e; text-transform: uppercase; margin-right: 6px; }}
+  .badge-imp {{ display: inline-block; font-size: 10px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; background: #fff3bf;
+    color: #835400; border: 1px solid #f0c040; border-radius: 4px;
+    padding: 1px 7px; margin-right: 8px; vertical-align: middle; }}
+  .card-imp {{ border-left: 3px solid #f0c040 !important; }}
   .topics {{ display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }}
   .topic {{ font-size: 11px; background: #f1f3f5; color: #3b5bdb; border-radius: 20px;
     padding: 2px 9px; }}
@@ -612,6 +677,10 @@ def main():
     print("Buscando repositorios en GitHub...", file=sys.stderr)
     repos, errors = collect()
     print(f"  {len(repos)} repos unicos, {len(errors)} busquedas con error", file=sys.stderr)
+
+    mark_important(repos)
+    print("[traduccion] Traduciendo descripciones al espanol...", file=sys.stderr)
+    add_translations(repos)
 
     highlight_md = None
     if args.no_llm:

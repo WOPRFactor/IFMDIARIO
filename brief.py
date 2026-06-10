@@ -76,6 +76,15 @@ LOOKBACK_HOURS = 48  # ventana de tiempo a considerar
 MAX_PER_SOURCE = 6   # tope de items por fuente para no saturar
 USER_AGENT = "Mozilla/5.0 (AI-Daily-Brief/1.0)"
 
+# Keywords que elevan la importancia de una noticia
+IMPORTANT_KEYWORDS = [
+    "ban", "banned", "mandatory", "fine", "penalty", "breach", "hack",
+    "critical", "emergency", "executive order", "regulation", "law",
+    "signed", "enforcement", "lawsuit", "billion", "shutdown", "blocked",
+    "prohibited", "vulnerability", "exploit", "zero-day", "attack",
+    "leaked", "exposed", "sanctioned", "illegal",
+]
+
 
 def fetch(url):
     """Descarga el contenido de una URL con timeout y user-agent."""
@@ -120,6 +129,59 @@ def clean_text(s):
     s = html.unescape(s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def translate_batch(texts):
+    """Traduce lista de textos EN->ES via Google Translate (sin API key).
+    Requiere: pip install deep-translator
+    Si no esta instalado o falla, devuelve los textos originales.
+    """
+    if not texts:
+        return texts
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        return texts
+    translator = GoogleTranslator(source="en", target="es")
+    results = []
+    batch_size = 20
+    for i in range(0, len(texts), batch_size):
+        chunk = texts[i:i + batch_size]
+        try:
+            results.extend(translator.translate_batch(chunk))
+        except Exception:
+            results.extend(chunk)
+    return results
+
+
+def score_item(item):
+    """Puntua la importancia de un item (sin LLM) por categoria, keywords y recencia."""
+    score = {"Regulacion": 3, "Vulnerabilidades": 2, "Gobierno IA": 1, "Tecnologia": 0}.get(
+        item["category"], 0)
+    blob = f"{item['title']} {item['summary']}".lower()
+    score += sum(1 for kw in IMPORTANT_KEYWORDS if kw in blob)
+    if item["date"]:
+        age_h = (dt.datetime.now(dt.timezone.utc) - item["date"]).total_seconds() / 3600
+        score += 2 if age_h < 12 else (1 if age_h < 24 else 0)
+    return score
+
+
+def mark_important(items, top_n=5):
+    """Marca los top_n items mas importantes con item['important'] = True."""
+    scored = sorted(enumerate(items), key=lambda x: score_item(x[1]), reverse=True)
+    top = {i for i, _ in scored[:top_n]}
+    for i, it in enumerate(items):
+        it["important"] = i in top
+    return items
+
+
+def add_translations(items):
+    """Agrega item['summary_es'] con la traduccion al espanol de cada resumen."""
+    texts = [it["summary"] for it in items]
+    translated = translate_batch(texts)
+    for it, es in zip(items, translated):
+        it["summary_es"] = es if es and es.strip() != it["summary"].strip() else ""
+    return items
 
 
 def is_relevant(source_name, title, summary):
@@ -449,11 +511,15 @@ def build_markdown(items, errors, highlight_md=None):
         lines.append(f"## {titles[cat]}")
         for it in cat_items:
             date_str = it["date"].strftime("%d/%m %H:%M") if it["date"] else "s/f"
-            lines.append(f"### {it['title']}")
+            marker = "**[IMPORTANTE]** " if it.get("important") else ""
+            lines.append(f"### {marker}{it['title']}")
             lines.append(f"_{it['source']} · {date_str} UTC_")
             if it["summary"]:
                 lines.append("")
                 lines.append(it["summary"])
+            if it.get("summary_es"):
+                lines.append("")
+                lines.append(f"> **ES:** {it['summary_es']}")
             lines.append("")
             lines.append(f"[Leer mas]({it['link']})")
             lines.append("")
@@ -549,12 +615,15 @@ def build_html_page(items, errors, highlight_md=None):
         cards = []
         for it in cat_items:
             date_str = it["date"].strftime("%d/%m %H:%M") if it["date"] else "s/f"
-            summ = f'<p class="summary">{esc(it["summary"])}</p>' if it["summary"] else ""
+            important_badge = '<span class="badge-imp">IMPORTANTE</span>' if it.get("important") else ""
+            summ_en = f'<p class="summary">{esc(it["summary"])}</p>' if it["summary"] else ""
+            summ_es = (f'<p class="summary-es"><span class="es-label">ES</span> {esc(it["summary_es"])}</p>'
+                       if it.get("summary_es") else "")
             cards.append(
-                f'<article class="card">'
-                f'<h3><a href="{esc(it["link"])}" target="_blank" rel="noopener">{esc(it["title"])}</a></h3>'
+                f'<article class="card{"  card-imp" if it.get("important") else ""}">'
+                f'<h3>{important_badge}<a href="{esc(it["link"])}" target="_blank" rel="noopener">{esc(it["title"])}</a></h3>'
                 f'<div class="meta">{esc(it["source"])} &middot; {date_str} UTC</div>'
-                f'{summ}'
+                f'{summ_en}{summ_es}'
                 f'<a class="more" href="{esc(it["link"])}" target="_blank" rel="noopener">Leer la noticia &rarr;</a>'
                 f'</article>'
             )
@@ -619,7 +688,17 @@ def build_html_page(items, errors, highlight_md=None):
   .card h3 a {{ color: var(--ink); text-decoration: none; }}
   .card h3 a:hover {{ text-decoration: underline; }}
   .meta {{ font-size: 12px; color: var(--muted); margin-bottom: 8px; }}
-  .summary {{ font-size: 14px; margin: 0 0 10px; color: #374151; }}
+  .summary {{ font-size: 14px; margin: 0 0 6px; color: #374151; }}
+  .summary-es {{ font-size: 14px; margin: 0 0 10px; color: #1e3a5f;
+    background: #f0f4ff; border-left: 3px solid #3b5bdb;
+    padding: 6px 10px; border-radius: 0 6px 6px 0; }}
+  .es-label {{ font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    color: #3b5bdb; text-transform: uppercase; margin-right: 6px; }}
+  .badge-imp {{ display: inline-block; font-size: 10px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; background: #fff3bf;
+    color: #835400; border: 1px solid #f0c040; border-radius: 4px;
+    padding: 1px 7px; margin-right: 8px; vertical-align: middle; }}
+  .card-imp {{ border-left: 3px solid #f0c040 !important; }}
   .more {{ font-size: 13px; font-weight: 600; color: #3b5bdb; text-decoration: none; }}
   .more:hover {{ text-decoration: underline; }}
   .empty {{ color: var(--muted); }}
@@ -724,6 +803,11 @@ def main():
     print("Recolectando fuentes...", file=sys.stderr)
     items, errors = collect()
     print(f"  {len(items)} items, {len(errors)} fuentes con error", file=sys.stderr)
+
+    # Marca los mas importantes y traduce resumenes (sin API key, via Google Translate).
+    mark_important(items)
+    print("[traduccion] Traduciendo resumenes al espanol...", file=sys.stderr)
+    add_translations(items)
 
     # Capa LLM opcional con fallback automatico al modo simple.
     highlight_md = None
