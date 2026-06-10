@@ -835,23 +835,15 @@ def main():
         f.write(page)
     print(f"Pagina web escrita en {args.html}", file=sys.stderr)
 
-    # Version en espanol
-    if not args.no_llm and llm_available():
-        print("[es] Traduciendo al espanol...", file=sys.stderr)
-        items_es = llm_translate_items(items)
-        if items_es:
-            md_es = build_markdown(items_es, errors, highlight_md=highlight_md)
-            with open(args.out_es, "w", encoding="utf-8") as f:
-                f.write(md_es)
-            print(f"[es] Informe en espanol escrito en {args.out_es}", file=sys.stderr)
-            page_es = build_html_page(items_es, errors, highlight_md=highlight_md)
-            with open(args.html_es, "w", encoding="utf-8") as f:
-                f.write(page_es)
-            print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)
-        else:
-            print("[es] Traduccion no disponible", file=sys.stderr)
-    else:
-        print("[es] Sin API key -> version en espanol omitida", file=sys.stderr)
+    # Version en espanol: usa items ya traducidos por Google Translate (siempre disponible).
+    md_es = build_markdown(items, errors, highlight_md=highlight_md)
+    with open(args.out_es, "w", encoding="utf-8") as f:
+        f.write(md_es)
+    print(f"[es] Informe en espanol escrito en {args.out_es}", file=sys.stderr)
+    page_es = build_html_page(items, errors, highlight_md=highlight_md)
+    with open(args.html_es, "w", encoding="utf-8") as f:
+        f.write(page_es)
+    print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)
 
     if args.email:
         today = dt.datetime.now().strftime("%Y-%m-%d")
