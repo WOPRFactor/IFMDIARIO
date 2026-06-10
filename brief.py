@@ -38,10 +38,13 @@ SOURCES = [
     ("Regulacion", "EU AI Act Newsroom", "https://artificialintelligenceact.eu/feed/", "rss"),
     ("Regulacion", "NIST News", "https://www.nist.gov/news-events/news/rss.xml", "rss"),
     ("Regulacion", "IAPP - Privacy & AI", "https://iapp.org/feed/", "rss"),
+    ("Regulacion", "AlgorithmWatch", "https://algorithmwatch.org/en/feed/", "rss"),
+    ("Regulacion", "Future of Life Institute", "https://futureoflife.org/feed/", "rss"),
 
     # --- Gobierno de IA / governance ---
     ("Gobierno IA", "Stanford HAI", "https://hai.stanford.edu/news/rss.xml", "rss"),
     ("Gobierno IA", "OECD AI Policy", "https://oecd.ai/en/rss", "rss"),
+    ("Gobierno IA", "AI Now Institute", "https://ainowinstitute.org/feed", "rss"),
 
     # --- Vulnerabilidades / seguridad ---
     # NVD entrega un feed con CVEs recientes. Filtramos por palabras IA/ML mas abajo.
@@ -53,6 +56,9 @@ SOURCES = [
     ("Tecnologia", "Google DeepMind Blog", "https://deepmind.google/blog/rss.xml", "rss"),
     ("Tecnologia", "The Verge - AI", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "atom"),
     ("Tecnologia", "VentureBeat AI", "https://venturebeat.com/category/ai/feed/", "rss"),
+    ("Tecnologia", "MIT Technology Review", "https://www.technologyreview.com/feed/", "rss"),
+    ("Tecnologia", "Wired AI", "https://www.wired.com/feed/tag/ai/latest/rss", "rss"),
+    ("Tecnologia", "TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "rss"),
 ]
 
 # Palabras clave para decidir si una noticia es relevante.
@@ -318,6 +324,78 @@ def llm_highlight(items):
     if not out:
         return None
     return "\n".join(out)
+
+
+def llm_translate_items(items):
+    """Usa Claude para traducir al español los títulos y resúmenes de los items.
+
+    Devuelve una copia de la lista con title/summary traducidos, o None si falla.
+    """
+    import json
+    from urllib.request import Request as _Req, urlopen as _open
+    from urllib.error import URLError as _URLErr, HTTPError as _HTTPErr
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key or not items:
+        return None
+
+    catalog = []
+    for i, it in enumerate(items[:LLM_MAX_INPUT_ITEMS]):
+        catalog.append({"i": i, "t": it["title"], "s": it["summary"][:200]})
+
+    system = (
+        "Sos un traductor tecnico. Te paso un JSON con noticias de IA en ingles. "
+        "Traducí cada 't' (title) y 's' (summary) al español rioplatense, claro y preciso. "
+        "Devolvé SOLO un JSON valido, sin texto extra, con esta forma exacta: "
+        '{"items": [{"i": <numero>, "t": "<titulo traducido>", "s": "<resumen traducido>"}]}'
+    )
+    user = json.dumps(catalog, ensure_ascii=False)
+
+    payload = json.dumps({
+        "model": LLM_MODEL,
+        "max_tokens": 4000,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }).encode("utf-8")
+
+    req = _Req(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+
+    try:
+        with _open(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (_HTTPErr, _URLErr, TimeoutError, ValueError) as e:
+        print(f"[translate] error ({e}): se omite traduccion", file=sys.stderr)
+        return None
+
+    try:
+        text = "".join(
+            block.get("text", "")
+            for block in data.get("content", [])
+            if block.get("type") == "text"
+        ).strip()
+        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
+        parsed = json.loads(text)
+        translations = {entry["i"]: entry for entry in parsed.get("items", [])}
+    except (ValueError, KeyError, AttributeError) as e:
+        print(f"[translate] respuesta no parseable ({e}): se omite traduccion", file=sys.stderr)
+        return None
+
+    import copy
+    translated = copy.deepcopy(items)
+    for i, it in enumerate(translated[:LLM_MAX_INPUT_ITEMS]):
+        if i in translations:
+            it["title"] = clean_text(translations[i].get("t", it["title"]))
+            it["summary"] = clean_text(translations[i].get("s", it["summary"]))
+    return translated
 
 
 def build_markdown(items, errors, highlight_md=None):
@@ -632,9 +710,13 @@ def send_email(subject, md_body):
 def main():
     parser = argparse.ArgumentParser(description="AI Daily Brief")
     parser.add_argument("--email", action="store_true", help="enviar por email")
-    parser.add_argument("--out", default="brief.md", help="archivo Markdown de salida")
+    parser.add_argument("--out", default="brief.md", help="archivo Markdown de salida (ingles)")
+    parser.add_argument("--out-es", default="brief_es.md",
+                        help="archivo Markdown en español (requiere API key)")
     parser.add_argument("--html", default="index.html",
                         help="archivo HTML de salida para la web (GitHub Pages)")
+    parser.add_argument("--html-es", default="index_es.html",
+                        help="archivo HTML en español para la web")
     parser.add_argument("--no-llm", action="store_true",
                         help="forzar modo simple aunque haya API key")
     args = parser.parse_args()
@@ -667,6 +749,26 @@ def main():
     with open(args.html, "w", encoding="utf-8") as f:
         f.write(page)
     print(f"Pagina web escrita en {args.html}", file=sys.stderr)
+
+    # Version en espanol: traduce titulos y resumenes con el LLM si esta disponible.
+    if not args.no_llm and llm_available():
+        print("[es] Traduciendo al espanol...", file=sys.stderr)
+        items_es = llm_translate_items(items)
+        if items_es:
+            # El highlight_md ya esta en espanol (el LLM lo genera en espanol),
+            # asi que lo reutilizamos directamente.
+            md_es = build_markdown(items_es, errors, highlight_md=highlight_md)
+            with open(args.out_es, "w", encoding="utf-8") as f:
+                f.write(md_es)
+            print(f"[es] Informe en espanol escrito en {args.out_es}", file=sys.stderr)
+            page_es = build_html_page(items_es, errors, highlight_md=highlight_md)
+            with open(args.html_es, "w", encoding="utf-8") as f:
+                f.write(page_es)
+            print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)
+        else:
+            print("[es] Traduccion no disponible (fallback omitido)", file=sys.stderr)
+    else:
+        print("[es] Sin API key -> version en espanol omitida", file=sys.stderr)
 
     if args.email:
         today = dt.datetime.now().strftime("%Y-%m-%d")

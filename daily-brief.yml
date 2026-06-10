@@ -30,11 +30,13 @@ jobs:
           # Opcional: si cargas este secret, el informe usa Claude para destacar
           # y resumir lo mas importante. Si no esta, corre en modo simple igual.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python3 brief.py --email --out brief.md
+        run: python3 brief.py --email --out brief.md --out-es brief_es.md
 
-      - name: Guardar informe como artifact
+      - name: Guardar informes como artifact
         uses: actions/upload-artifact@v4
         with:
           name: ai-daily-brief
-          path: brief.md
+          path: |
+            brief.md
+            brief_es.md
           retention-days: 30
