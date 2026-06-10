@@ -59,6 +59,12 @@ SOURCES = [
     ("Tecnologia", "MIT Technology Review", "https://www.technologyreview.com/feed/", "rss"),
     ("Tecnologia", "Wired AI", "https://www.wired.com/feed/tag/ai/latest/rss", "rss"),
     ("Tecnologia", "TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/", "rss"),
+
+    # --- Nuevos modelos / releases ---
+    ("Modelos", "OpenAI News", "https://openai.com/news/rss.xml", "rss"),
+    ("Modelos", "Meta AI Blog", "https://ai.meta.com/blog/rss/", "rss"),
+    ("Modelos", "Hugging Face Blog", "https://huggingface.co/blog/feed.xml", "atom"),
+    ("Modelos", "Mistral AI News", "https://mistral.ai/news/rss", "rss"),
 ]
 
 # Palabras clave para decidir si una noticia es relevante.
@@ -70,6 +76,11 @@ KEYWORDS = [
     "prompt injection", "model", "ml ", "deepfake", "neural",
     "openai", "anthropic", "gemini", "claude", "mistral", "llama",
     "ai act", "ai governance", "nist ai", "iso 42001", "ai risk",
+    # nuevos modelos y releases
+    "gpt-5", "gpt-4", "grok", "qwen", "deepseek", "phi-", "gemma",
+    "release", "launched", "benchmark", "sota", "state of the art",
+    "multimodal", "reasoning model", "open source model", "weights",
+    "hugging face", "ollama", "fine-tune", "context window",
 ]
 
 LOOKBACK_HOURS = 48  # ventana de tiempo a considerar
@@ -467,12 +478,13 @@ def build_markdown(items, errors, highlight_md=None):
     si es None, se arma el resumen simple por prioridad de categoria.
     """
     today = dt.datetime.now().strftime("%Y-%m-%d")
-    order = ["Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
+    order = ["Modelos", "Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
     titles = {
-        "Regulacion": "Regulacion y leyes",
-        "Gobierno IA": "Gobierno de IA",
+        "Modelos":          "Nuevos modelos y releases",
+        "Regulacion":       "Regulacion y leyes",
+        "Gobierno IA":      "Gobierno de IA",
         "Vulnerabilidades": "Vulnerabilidades y seguridad",
-        "Tecnologia": "Tecnologia y mercado",
+        "Tecnologia":       "Tecnologia y mercado",
     }
 
     lines = []
@@ -548,19 +560,21 @@ def build_html_page(items, errors, highlight_md=None):
     """
     today_h = dt.datetime.now().strftime("%d/%m/%Y")
     gen_h = dt.datetime.now().strftime("%H:%M")
-    order = ["Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
+    order = ["Modelos", "Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
     titles = {
-        "Regulacion": "Regulacion y leyes",
-        "Gobierno IA": "Gobierno de IA",
+        "Modelos":          "Nuevos modelos y releases",
+        "Regulacion":       "Regulacion y leyes",
+        "Gobierno IA":      "Gobierno de IA",
         "Vulnerabilidades": "Vulnerabilidades y seguridad",
-        "Tecnologia": "Tecnologia y mercado",
+        "Tecnologia":       "Tecnologia y mercado",
     }
     # color de acento por categoria (sobrio, no semaforo chillon)
     cat_color = {
-        "Regulacion": "#3b5bdb",
-        "Gobierno IA": "#0c8599",
+        "Modelos":          "#e67700",
+        "Regulacion":       "#3b5bdb",
+        "Gobierno IA":      "#0c8599",
         "Vulnerabilidades": "#c92a2a",
-        "Tecnologia": "#5f3dc4",
+        "Tecnologia":       "#5f3dc4",
     }
 
     def esc(s):
