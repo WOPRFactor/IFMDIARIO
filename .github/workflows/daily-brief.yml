@@ -113,67 +113,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
       - name: Descargar artifacts
         uses: actions/download-artifact@v4
         with:
           path: _site
           merge-multiple: true
-      - name: Crear index principal
-        run: |
-          cat > _site/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html lang="es">
-          <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Daily Briefs</title>
-          <style>
-            body { font-family: -apple-system, "Segoe UI", sans-serif; max-width: 600px;
-                   margin: 60px auto; padding: 0 22px; background: #fbfbfd; color: #1a1c23; }
-            h1 { font-size: 28px; border-bottom: 2px solid #1a1c23; padding-bottom: 12px; }
-            .grid { display: grid; gap: 14px; margin-top: 28px; }
-            .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
-                    padding: 18px 20px; }
-            .card h2 { font-size: 16px; margin: 0 0 6px; }
-            .card p { font-size: 13px; color: #6b7280; margin: 0 0 12px; }
-            .links { display: flex; gap: 10px; }
-            a.btn { font-size: 13px; font-weight: 600; text-decoration: none;
-                    padding: 5px 14px; border-radius: 6px; }
-            a.btn-en { background: #f1f3f5; color: #1a1c23; }
-            a.btn-es { background: #3b5bdb; color: #fff; }
-          </style>
-          </head>
-          <body>
-          <h1>Daily Briefs</h1>
-          <div class="grid">
-            <div class="card">
-              <h2>IA & Gobernanza</h2>
-              <p>Regulacion, gobierno de IA, tecnologia y modelos</p>
-              <div class="links">
-                <a class="btn btn-en" href="ia.html">EN</a>
-                <a class="btn btn-es" href="ia_es.html">ES</a>
-              </div>
-            </div>
-            <div class="card">
-              <h2>Ciberseguridad</h2>
-              <p>Zero-days, ransomware, vulnerabilidades, vendors</p>
-              <div class="links">
-                <a class="btn btn-en" href="cyber.html">EN</a>
-                <a class="btn btn-es" href="cyber_es.html">ES</a>
-              </div>
-            </div>
-            <div class="card">
-              <h2>GitHub Repos</h2>
-              <p>Repositorios en tendencia de IA y ciberseguridad</p>
-              <div class="links">
-                <a class="btn btn-en" href="github.html">EN</a>
-                <a class="btn btn-es" href="github_es.html">ES</a>
-              </div>
-            </div>
-          </div>
-          </body>
-          </html>
-          EOF
+      - name: Copiar portal como index
+        run: cp portal.html _site/index.html
       - name: Configurar Pages
         uses: actions/configure-pages@v5
       - name: Subir sitio
