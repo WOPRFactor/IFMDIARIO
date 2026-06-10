@@ -1,0 +1,790 @@
+#!/usr/bin/env python3
+"""
+Cyber Daily Brief — Informe diario de ciberseguridad: zero-days, ransomware,
+vulnerabilidades, cyberataques, nuevas amenazas y novedades de vendors.
+
+Uso:
+    python brief_cyber.py                  # genera cyber_brief.md y lo imprime
+    python brief_cyber.py --email          # ademas lo envia por email
+
+Configuracion por variables de entorno (para email):
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_TO_CYBER
+    (usa MAIL_TO_CYBER para tener destinatarios distintos al informe de IA)
+"""
+
+import argparse
+import copy
+import datetime as dt
+import html
+import json
+import os
+import re
+import smtplib
+import sys
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+from xml.etree import ElementTree as ET
+
+# ----------------------------------------------------------------------------
+# FUENTES
+# ----------------------------------------------------------------------------
+SOURCES = [
+    # --- Alertas oficiales ---
+    ("Alertas", "CISA Alerts", "https://www.cisa.gov/news.xml", "rss"),
+    ("Alertas", "CISA Known Exploited Vulns", "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", "json_cisa"),
+    ("Alertas", "US-CERT / NCAS", "https://www.cisa.gov/ncas/all.xml", "rss"),
+
+    # --- Vulnerabilidades / CVEs ---
+    ("Vulnerabilidades", "NVD Recent CVEs", "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json.gz", "nvd"),
+    ("Vulnerabilidades", "Packet Storm Security", "https://packetstormsecurity.com/headlines.xml", "rss"),
+    ("Vulnerabilidades", "Exploit-DB", "https://www.exploit-db.com/rss.xml", "rss"),
+
+    # --- Noticias generales de seguridad ---
+    ("Noticias", "Krebs on Security", "https://krebsonsecurity.com/feed/", "rss"),
+    ("Noticias", "Schneier on Security", "https://www.schneier.com/feed/atom/", "atom"),
+    ("Noticias", "The Hacker News", "https://feeds.feedburner.com/TheHackersNews", "rss"),
+    ("Noticias", "BleepingComputer", "https://www.bleepingcomputer.com/feed/", "rss"),
+    ("Noticias", "Dark Reading", "https://www.darkreading.com/rss.xml", "rss"),
+    ("Noticias", "Wired Security", "https://www.wired.com/feed/category/security/latest/rss", "rss"),
+    ("Noticias", "SANS Internet Stormcast", "https://isc.sans.edu/rssfeed_full.xml", "rss"),
+
+    # --- Threat intelligence / malware ---
+    ("Amenazas", "Malwarebytes Labs", "https://www.malwarebytes.com/blog/feed/", "rss"),
+    ("Amenazas", "Sophos News", "https://news.sophos.com/en-us/feed/", "rss"),
+    ("Amenazas", "Recorded Future Blog", "https://www.recordedfuture.com/feed", "rss"),
+    ("Amenazas", "Securelist (Kaspersky)", "https://securelist.com/feed/", "rss"),
+    ("Amenazas", "Mandiant Blog", "https://www.mandiant.com/resources/blog/rss.xml", "rss"),
+
+    # --- Vendors ---
+    ("Vendors", "Cisco Talos Blog", "https://blog.talosintelligence.com/feeds/posts/default", "atom"),
+    ("Vendors", "Cisco Security Advisories", "https://sec.cloudapps.cisco.com/security/center/eventResponses.x?column=date&order=desc&format=rss", "rss"),
+    ("Vendors", "Fortinet Blog", "https://www.fortinet.com/blog/feed", "rss"),
+    ("Vendors", "Fortinet PSIRT Advisories", "https://www.fortiguard.com/rss/psirt.xml", "rss"),
+    ("Vendors", "Check Point Blog", "https://blog.checkpoint.com/feed/", "rss"),
+    ("Vendors", "Check Point Research", "https://research.checkpoint.com/feed/", "rss"),
+]
+
+# Palabras clave para filtrar feeds generalistas.
+# Las fuentes 100% de seguridad pasan casi todo; estas keywords apuntan a
+# temas concretos: zero-days, ransomware, CVEs, ataques, etc.
+KEYWORDS = [
+    # amenazas
+    "ransomware", "zero-day", "zero day", "0day", "exploit", "malware",
+    "trojan", "backdoor", "rootkit", "spyware", "botnet", "worm", "virus",
+    "phishing", "credential", "data breach", "leak", "exfiltration",
+    "apt", "threat actor", "nation-state", "cyberattack", "cyber attack",
+    # vulnerabilidades
+    "cve-", "vulnerability", "vulnerabilidad", "patch", "rce",
+    "remote code execution", "privilege escalation", "sql injection",
+    "xss", "csrf", "buffer overflow", "memory corruption", "use-after-free",
+    "critical", "high severity",
+    # vendors
+    "cisco", "fortinet", "fortigate", "checkpoint", "check point",
+    "palo alto", "crowdstrike", "sentinelone", "microsoft", "windows",
+    "exchange", "active directory", "vmware", "citrix", "ivanti",
+    # general
+    "cybersecurity", "ciberseguridad", "infosec", "pentest", "red team",
+    "incident response", "soc", "siem", "ioc", "ttps", "mitre",
+    "supply chain", "third-party", "firmware",
+]
+
+LOOKBACK_HOURS = 48
+MAX_PER_SOURCE = 5
+USER_AGENT = "Mozilla/5.0 (Cyber-Daily-Brief/1.0)"
+
+LLM_MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
+LLM_MAX_INPUT_ITEMS = 60
+LLM_MAX_OUTPUT_TOKENS = 1800
+
+
+# ----------------------------------------------------------------------------
+# UTILIDADES COMUNES
+# ----------------------------------------------------------------------------
+
+def fetch(url):
+    req = Request(url, headers={"User-Agent": USER_AGENT})
+    with urlopen(req, timeout=25) as resp:
+        return resp.read()
+
+
+def parse_date(text):
+    if not text:
+        return None
+    text = text.strip()
+    formats = [
+        "%a, %d %b %Y %H:%M:%S %z",
+        "%a, %d %b %Y %H:%M:%S %Z",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    ]
+    cleaned = text.replace("GMT", "+0000").replace("UTC", "+0000")
+    if cleaned.endswith("Z"):
+        cleaned = cleaned[:-1] + "+0000"
+    for fmt in formats:
+        try:
+            d = dt.datetime.strptime(cleaned, fmt)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=dt.timezone.utc)
+            return d.astimezone(dt.timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def clean_text(s):
+    if not s:
+        return ""
+    s = re.sub(r"<[^>]+>", "", s)
+    s = html.unescape(s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def is_relevant(title, summary):
+    blob = f"{title} {summary}".lower()
+    return any(kw in blob for kw in KEYWORDS)
+
+
+# ----------------------------------------------------------------------------
+# PARSERS
+# ----------------------------------------------------------------------------
+
+def parse_rss_atom(category, name, raw):
+    items = []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return items
+
+    nodes = root.findall(".//item")
+    is_atom = False
+    if not nodes:
+        ns = {"a": "http://www.w3.org/2005/Atom"}
+        nodes = root.findall(".//a:entry", ns)
+        is_atom = True
+
+    for node in nodes[:MAX_PER_SOURCE * 2]:
+        if is_atom:
+            ns = {"a": "http://www.w3.org/2005/Atom"}
+            title = node.findtext("a:title", default="", namespaces=ns)
+            link_el = node.find("a:link", ns)
+            link = link_el.get("href") if link_el is not None else ""
+            summary = (node.findtext("a:summary", default="", namespaces=ns) or
+                       node.findtext("a:content", default="", namespaces=ns))
+            date_txt = (node.findtext("a:updated", default="", namespaces=ns) or
+                        node.findtext("a:published", default="", namespaces=ns))
+        else:
+            title = node.findtext("title", default="")
+            link = node.findtext("link", default="")
+            summary = node.findtext("description", default="")
+            date_txt = node.findtext("pubDate", default="")
+
+        title = clean_text(title)
+        summary = clean_text(summary)
+        pub = parse_date(date_txt)
+
+        if not title:
+            continue
+        if not is_relevant(title, summary):
+            continue
+
+        items.append({
+            "category": category,
+            "source": name,
+            "title": title,
+            "link": link.strip(),
+            "summary": summary[:300],
+            "date": pub,
+        })
+    return items
+
+
+def parse_json_cisa(category, name, raw):
+    """Feed JSON de CISA Known Exploited Vulnerabilities."""
+    items = []
+    try:
+        data = json.loads(raw)
+    except (ValueError, KeyError):
+        return items
+
+    vulns = data.get("vulnerabilities", [])
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=LOOKBACK_HOURS * 3)
+    for v in vulns[:MAX_PER_SOURCE * 3]:
+        date_added = parse_date(v.get("dateAdded", ""))
+        if date_added and date_added < cutoff:
+            continue
+        cve_id = v.get("cveID", "")
+        vendor_project = v.get("vendorProject", "")
+        product = v.get("product", "")
+        vuln_name = v.get("vulnerabilityName", "")
+        description = v.get("shortDescription", "")
+        title = f"{cve_id} — {vendor_project} {product}: {vuln_name}" if cve_id else vuln_name
+        items.append({
+            "category": category,
+            "source": name,
+            "title": clean_text(title),
+            "link": f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog",
+            "summary": clean_text(description)[:300],
+            "date": date_added,
+        })
+    return items[:MAX_PER_SOURCE]
+
+
+def parse_feed(category, name, raw, kind):
+    if kind == "json_cisa":
+        return parse_json_cisa(category, name, raw)
+    if kind == "nvd":
+        return []  # NVD JSON.gz requiere gunzip; omitido para mantener stdlib puro
+    return parse_rss_atom(category, name, raw)
+
+
+# ----------------------------------------------------------------------------
+# RECOLECCION
+# ----------------------------------------------------------------------------
+
+def collect():
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=LOOKBACK_HOURS)
+    all_items = []
+    errors = []
+
+    for category, name, url, kind in SOURCES:
+        try:
+            raw = fetch(url)
+            feed_items = parse_feed(category, name, raw, kind)
+            recent = [it for it in feed_items
+                      if it["date"] is None or it["date"] >= cutoff]
+            all_items.extend(recent[:MAX_PER_SOURCE])
+        except (URLError, HTTPError, TimeoutError) as e:
+            errors.append(f"{name}: {e}")
+        except Exception as e:
+            errors.append(f"{name}: {type(e).__name__}: {e}")
+
+    return all_items, errors
+
+
+# ----------------------------------------------------------------------------
+# CAPA LLM OPCIONAL
+# ----------------------------------------------------------------------------
+
+def llm_available():
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def llm_highlight(items):
+    """Pide a Claude que seleccione y explique las amenazas mas criticas."""
+    from urllib.request import Request as _Req, urlopen as _open
+    from urllib.error import URLError as _URLErr, HTTPError as _HTTPErr
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key or not items:
+        return None
+
+    catalog = []
+    for i, it in enumerate(items[:LLM_MAX_INPUT_ITEMS]):
+        catalog.append(
+            f"[{i}] ({it['category']}) {it['title']} — {it['summary'][:200]}"
+        )
+
+    system = (
+        "Sos analista de ciberseguridad para un CISO. Te paso titulares de amenazas, "
+        "vulnerabilidades y novedades de seguridad. "
+        "Elegi las 5 a 7 MAS CRITICAS (priorizando zero-days activamente explotados, "
+        "ransomware activo, CVEs criticos en infraestructura comun, y alertas de vendors "
+        "importantes como Cisco, Fortinet, Check Point). "
+        "Para cada una escribi UNA frase de por que es urgente, en espanol, clara y concreta. "
+        "Devolve SOLO un JSON valido, sin texto extra: "
+        '{"destacadas": [{"idx": <numero>, "porque": "<una frase>"}]}'
+    )
+    user = f"Titulares:\n" + "\n".join(catalog)
+
+    payload = json.dumps({
+        "model": LLM_MODEL,
+        "max_tokens": LLM_MAX_OUTPUT_TOKENS,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }).encode("utf-8")
+
+    req = _Req(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+
+    try:
+        with _open(req, timeout=40) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except _HTTPErr as e:
+        print(f"[llm] HTTP {e.code}: modo simple", file=sys.stderr)
+        return None
+    except (_URLErr, TimeoutError, ValueError) as e:
+        print(f"[llm] error ({e}): modo simple", file=sys.stderr)
+        return None
+
+    try:
+        text = "".join(
+            block.get("text", "")
+            for block in data.get("content", [])
+            if block.get("type") == "text"
+        ).strip()
+        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
+        parsed = json.loads(text)
+        destacadas = parsed.get("destacadas", [])
+    except (ValueError, KeyError, AttributeError) as e:
+        print(f"[llm] respuesta no parseable ({e}): modo simple", file=sys.stderr)
+        return None
+
+    if not destacadas:
+        return None
+
+    out = []
+    for d in destacadas:
+        try:
+            idx = int(d["idx"])
+            it = items[idx]
+        except (KeyError, ValueError, IndexError, TypeError):
+            continue
+        porque = clean_text(str(d.get("porque", "")))[:300]
+        out.append(f"- **[{it['category']}]** {it['title']}  ")
+        if porque:
+            out.append(f"  _{porque}_  ")
+        out.append(f"  [Leer mas]({it['link']})")
+    return "\n".join(out) if out else None
+
+
+def llm_translate_items(items):
+    """Traduce titulos y resumenes al espanol via Claude."""
+    from urllib.request import Request as _Req, urlopen as _open
+    from urllib.error import URLError as _URLErr, HTTPError as _HTTPErr
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key or not items:
+        return None
+
+    catalog = [{"i": i, "t": it["title"], "s": it["summary"][:200]}
+               for i, it in enumerate(items[:LLM_MAX_INPUT_ITEMS])]
+
+    system = (
+        "Sos un traductor tecnico de ciberseguridad. "
+        "Traducí cada 't' (title) y 's' (summary) al español rioplatense, preciso y tecnico. "
+        "Mantene los nombres de CVEs, productos y marcas sin traducir. "
+        "Devolve SOLO JSON valido: "
+        '{"items": [{"i": <numero>, "t": "<titulo>", "s": "<resumen>"}]}'
+    )
+
+    payload = json.dumps({
+        "model": LLM_MODEL,
+        "max_tokens": 4000,
+        "system": system,
+        "messages": [{"role": "user", "content": json.dumps(catalog, ensure_ascii=False)}],
+    }).encode("utf-8")
+
+    req = _Req(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+
+    try:
+        with _open(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[translate] error ({e}): omitido", file=sys.stderr)
+        return None
+
+    try:
+        text = "".join(
+            block.get("text", "")
+            for block in data.get("content", [])
+            if block.get("type") == "text"
+        ).strip()
+        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
+        translations = {entry["i"]: entry for entry in json.loads(text).get("items", [])}
+    except Exception as e:
+        print(f"[translate] no parseable ({e}): omitido", file=sys.stderr)
+        return None
+
+    translated = copy.deepcopy(items)
+    for i, it in enumerate(translated[:LLM_MAX_INPUT_ITEMS]):
+        if i in translations:
+            it["title"] = clean_text(translations[i].get("t", it["title"]))
+            it["summary"] = clean_text(translations[i].get("s", it["summary"]))
+    return translated
+
+
+# ----------------------------------------------------------------------------
+# GENERACION DEL INFORME
+# ----------------------------------------------------------------------------
+
+ORDER = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
+TITLES = {
+    "Alertas":         "Alertas oficiales",
+    "Vulnerabilidades": "Vulnerabilidades y exploits",
+    "Amenazas":        "Threat intelligence",
+    "Vendors":         "Novedades de vendors",
+    "Noticias":        "Noticias generales",
+}
+CAT_COLOR = {
+    "Alertas":         "#c92a2a",
+    "Vulnerabilidades": "#e67700",
+    "Amenazas":        "#862e9c",
+    "Vendors":         "#1864ab",
+    "Noticias":        "#2b8a3e",
+}
+
+
+def build_markdown(items, errors, highlight_md=None):
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    lines = []
+    lines.append(f"# Cyber Daily Brief — {today}")
+    lines.append("")
+    lines.append(f"_Ventana: ultimas {LOOKBACK_HOURS}h · {len(items)} novedades · "
+                 f"generado automaticamente_")
+    lines.append("")
+    lines.append("## Resumen ejecutivo — amenazas criticas")
+
+    if highlight_md:
+        lines.append("_Seleccion y analisis por IA (Claude)_")
+        lines.append("")
+        lines.append(highlight_md)
+    else:
+        priority = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
+        exec_items = [it for cat in priority for it in items if it["category"] == cat]
+        if exec_items:
+            for it in exec_items[:6]:
+                lines.append(f"- **[{it['category']}]** {it['title']} "
+                             f"([fuente]({it['link']}))")
+        else:
+            lines.append("- Sin novedades en la ventana de tiempo.")
+    lines.append("")
+
+    for cat in ORDER:
+        cat_items = [it for it in items if it["category"] == cat]
+        if not cat_items:
+            continue
+        lines.append(f"## {TITLES[cat]}")
+        for it in cat_items:
+            date_str = it["date"].strftime("%d/%m %H:%M") if it["date"] else "s/f"
+            lines.append(f"### {it['title']}")
+            lines.append(f"_{it['source']} · {date_str} UTC_")
+            if it["summary"]:
+                lines.append("")
+                lines.append(it["summary"])
+            lines.append("")
+            lines.append(f"[Leer mas]({it['link']})")
+            lines.append("")
+
+    lines.append("---")
+    lines.append("## Accion recomendada")
+    lines.append("- Revisar **Alertas** y **Vulnerabilidades** primero.")
+    lines.append("- Verificar si los CVEs afectan tu stack (Cisco, Fortinet, Check Point, Microsoft).")
+    lines.append("- Escalar indicadores de compromiso al SOC.")
+    lines.append("")
+
+    if errors:
+        lines.append("<details><summary>Fuentes con error</summary>")
+        lines.append("")
+        for e in errors:
+            lines.append(f"- {e}")
+        lines.append("</details>")
+
+    return "\n".join(lines)
+
+
+def build_html_page(items, errors, highlight_md=None):
+    today_h = dt.datetime.now().strftime("%d/%m/%Y")
+    gen_h = dt.datetime.now().strftime("%H:%M")
+
+    def esc(s):
+        return html.escape(s or "")
+
+    if highlight_md:
+        modo = "Seleccion y analisis por IA"
+        hi_html = []
+        for line in highlight_md.split("\n"):
+            line = line.strip()
+            m = re.match(r"- \*\*\[(.+?)\]\*\* (.+?)\s*$", line)
+            if m:
+                hi_html.append(
+                    f'<li><span class="tag" style="--c:{CAT_COLOR.get(m.group(1), "#555")}">'
+                    f'{esc(m.group(1))}</span> {esc(m.group(2))}'
+                )
+            elif line.startswith("_") and line.endswith("_"):
+                hi_html.append(f'<div class="why">{esc(line.strip("_ "))}</div>')
+            elif line.startswith("[Leer mas]"):
+                mm = re.search(r"\((.+?)\)", line)
+                if mm:
+                    hi_html.append(
+                        f'<a class="more" href="{esc(mm.group(1))}" '
+                        f'target="_blank" rel="noopener">Leer mas &rarr;</a></li>'
+                    )
+        highlight_html = "<ul class='highlights'>" + "\n".join(hi_html) + "</ul>"
+    else:
+        modo = "Seleccion automatica por categoria"
+        priority = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
+        exec_items = [it for cat in priority for it in items if it["category"] == cat][:6]
+        if exec_items:
+            lis = [
+                f'<li><span class="tag" style="--c:{CAT_COLOR.get(it["category"], "#555")}">'
+                f'{esc(it["category"])}</span> {esc(it["title"])} '
+                f'<a class="more" href="{esc(it["link"])}" target="_blank" rel="noopener">'
+                f'Leer mas &rarr;</a></li>'
+                for it in exec_items
+            ]
+            highlight_html = "<ul class='highlights'>" + "\n".join(lis) + "</ul>"
+        else:
+            highlight_html = "<p class='empty'>Sin novedades en la ventana de tiempo.</p>"
+
+    sections = []
+    for cat in ORDER:
+        cat_items = [it for it in items if it["category"] == cat]
+        if not cat_items:
+            continue
+        cards = []
+        for it in cat_items:
+            date_str = it["date"].strftime("%d/%m %H:%M") if it["date"] else "s/f"
+            summ = f'<p class="summary">{esc(it["summary"])}</p>' if it["summary"] else ""
+            cards.append(
+                f'<article class="card">'
+                f'<h3><a href="{esc(it["link"])}" target="_blank" rel="noopener">{esc(it["title"])}</a></h3>'
+                f'<div class="meta">{esc(it["source"])} &middot; {date_str} UTC</div>'
+                f'{summ}'
+                f'<a class="more" href="{esc(it["link"])}" target="_blank" rel="noopener">Leer &rarr;</a>'
+                f'</article>'
+            )
+        sections.append(
+            f'<section><h2 style="--c:{CAT_COLOR.get(cat, "#555")}">{esc(TITLES[cat])}'
+            f'<span class="count">{len(cat_items)}</span></h2>'
+            f'<div class="cards">{"".join(cards)}</div></section>'
+        )
+
+    errors_html = ""
+    if errors:
+        err_items = "".join(f"<li>{esc(e)}</li>" for e in errors)
+        errors_html = (
+            f'<details class="errors"><summary>Fuentes con error ({len(errors)})</summary>'
+            f'<ul>{err_items}</ul></details>'
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cyber Daily Brief — {today_h}</title>
+<style>
+  :root {{
+    --ink: #1a1c23; --muted: #6b7280; --line: #e5e7eb;
+    --bg: #f8f9fa; --card: #ffffff;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }}
+  .wrap {{ max-width: 760px; margin: 0 auto; padding: 48px 22px 80px; }}
+  header {{ border-bottom: 3px solid #c92a2a; padding-bottom: 18px; margin-bottom: 32px; }}
+  .eyebrow {{ font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: #c92a2a; font-weight: 700; }}
+  h1 {{ font-size: 34px; margin: 6px 0 4px; letter-spacing: -.02em; }}
+  .sub {{ color: var(--muted); font-size: 14px; }}
+  .exec {{ background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 24px; margin-bottom: 40px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }}
+  .exec h2 {{ font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
+    margin: 0 0 4px; color: var(--ink); }}
+  .exec .mode {{ font-size: 12px; color: var(--muted); margin-bottom: 14px; }}
+  ul.highlights {{ list-style: none; margin: 0; padding: 0; }}
+  ul.highlights li {{ padding: 12px 0; border-top: 1px solid var(--line); }}
+  ul.highlights li:first-child {{ border-top: none; }}
+  .tag {{ display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--c); border: 1px solid var(--c);
+    border-radius: 4px; padding: 1px 7px; margin-right: 8px; vertical-align: middle; }}
+  .why {{ color: var(--muted); font-size: 14px; font-style: italic; margin: 4px 0 4px 2px; }}
+  section {{ margin-bottom: 38px; }}
+  section h2 {{ font-size: 20px; border-left: 4px solid var(--c); padding-left: 12px;
+    margin: 0 0 16px; display: flex; align-items: center; gap: 10px; }}
+  .count {{ font-size: 12px; font-weight: 600; color: var(--muted); background: var(--line);
+    border-radius: 20px; padding: 2px 9px; }}
+  .cards {{ display: grid; gap: 14px; }}
+  .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; }}
+  .card h3 {{ font-size: 16px; margin: 0 0 6px; line-height: 1.4; }}
+  .card h3 a {{ color: var(--ink); text-decoration: none; }}
+  .card h3 a:hover {{ text-decoration: underline; }}
+  .meta {{ font-size: 12px; color: var(--muted); margin-bottom: 8px; }}
+  .summary {{ font-size: 14px; margin: 0 0 10px; color: #374151; }}
+  .more {{ font-size: 13px; font-weight: 600; color: #c92a2a; text-decoration: none; }}
+  .more:hover {{ text-decoration: underline; }}
+  .empty {{ color: var(--muted); }}
+  .errors {{ margin-top: 30px; font-size: 13px; color: var(--muted); }}
+  footer {{ margin-top: 50px; padding-top: 18px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted); }}
+  @media (prefers-reduced-motion: no-preference) {{
+    .card {{ transition: border-color .15s; }}
+    .card:hover {{ border-color: #cbd2dc; }}
+  }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">Cyber Daily Brief</div>
+      <h1>Ciberseguridad</h1>
+      <div class="sub">{today_h} &middot; generado {gen_h} &middot; ultimas {LOOKBACK_HOURS}h &middot; {len(items)} novedades</div>
+    </header>
+    <div class="exec">
+      <h2>Amenazas criticas</h2>
+      <div class="mode">{modo}</div>
+      {highlight_html}
+    </div>
+    {"".join(sections) if sections else "<p class='empty'>Sin novedades relevantes hoy.</p>"}
+    {errors_html}
+    <footer>Generado automaticamente. Cada titulo enlaza a la fuente original.</footer>
+  </div>
+</body>
+</html>"""
+
+
+# ----------------------------------------------------------------------------
+# EMAIL
+# ----------------------------------------------------------------------------
+
+def md_to_basic_html(md):
+    out = []
+    for line in md.split("\n"):
+        if line.startswith("### "):
+            out.append(f"<h3>{line[4:]}</h3>")
+        elif line.startswith("## "):
+            out.append(f"<h2>{line[3:]}</h2>")
+        elif line.startswith("# "):
+            out.append(f"<h1>{line[2:]}</h1>")
+        elif line.startswith("- "):
+            out.append(f"<li>{line[2:]}</li>")
+        elif line.strip() == "---":
+            out.append("<hr>")
+        elif line.strip() == "":
+            out.append("<br>")
+        else:
+            out.append(f"<p>{line}</p>")
+    body = "\n".join(out)
+    body = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', body)
+    body = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", body)
+    return f"<html><body style='font-family:sans-serif;max-width:700px'>{body}</body></html>"
+
+
+def send_email(subject, md_body):
+    host = os.environ.get("SMTP_HOST")
+    port = int(os.environ.get("SMTP_PORT") or "587")
+    user = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASS")
+    mail_from = os.environ.get("MAIL_FROM", user)
+    # Destinatario especifico para el informe cyber; cae a MAIL_TO si no esta.
+    mail_to = os.environ.get("MAIL_TO_CYBER") or os.environ.get("MAIL_TO")
+
+    if not all([host, user, password, mail_to]):
+        print("[email] Faltan variables SMTP. No se envia.", file=sys.stderr)
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = mail_to
+    msg.attach(MIMEText(md_body, "plain", "utf-8"))
+    msg.attach(MIMEText(md_to_basic_html(md_body), "html", "utf-8"))
+
+    with smtplib.SMTP(host, port) as server:
+        server.starttls()
+        server.login(user, password)
+        server.sendmail(mail_from, [a.strip() for a in mail_to.split(",")], msg.as_string())
+    print(f"[email] Enviado a {mail_to}")
+    return True
+
+
+# ----------------------------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="Cyber Daily Brief")
+    parser.add_argument("--email", action="store_true", help="enviar por email")
+    parser.add_argument("--out", default="cyber_brief.md",
+                        help="archivo Markdown de salida (ingles)")
+    parser.add_argument("--out-es", default="cyber_brief_es.md",
+                        help="archivo Markdown en espanol (requiere API key)")
+    parser.add_argument("--html", default="cyber_index.html",
+                        help="archivo HTML para GitHub Pages")
+    parser.add_argument("--html-es", default="cyber_index_es.html",
+                        help="archivo HTML en espanol")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="forzar modo simple aunque haya API key")
+    args = parser.parse_args()
+
+    print("Recolectando fuentes de ciberseguridad...", file=sys.stderr)
+    items, errors = collect()
+    print(f"  {len(items)} items, {len(errors)} fuentes con error", file=sys.stderr)
+
+    highlight_md = None
+    if args.no_llm:
+        print("[modo] simple (forzado por --no-llm)", file=sys.stderr)
+    elif not llm_available():
+        print("[modo] simple (sin ANTHROPIC_API_KEY)", file=sys.stderr)
+    else:
+        print("[modo] intentando destacado por IA...", file=sys.stderr)
+        highlight_md = llm_highlight(items)
+        if highlight_md:
+            print("[modo] IA OK", file=sys.stderr)
+        else:
+            print("[modo] IA no disponible -> fallback a simple", file=sys.stderr)
+
+    md = build_markdown(items, errors, highlight_md=highlight_md)
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write(md)
+    print(f"Informe escrito en {args.out}", file=sys.stderr)
+
+    page = build_html_page(items, errors, highlight_md=highlight_md)
+    with open(args.html, "w", encoding="utf-8") as f:
+        f.write(page)
+    print(f"Pagina web escrita en {args.html}", file=sys.stderr)
+
+    # Version en espanol
+    if not args.no_llm and llm_available():
+        print("[es] Traduciendo al espanol...", file=sys.stderr)
+        items_es = llm_translate_items(items)
+        if items_es:
+            md_es = build_markdown(items_es, errors, highlight_md=highlight_md)
+            with open(args.out_es, "w", encoding="utf-8") as f:
+                f.write(md_es)
+            print(f"[es] Informe en espanol escrito en {args.out_es}", file=sys.stderr)
+            page_es = build_html_page(items_es, errors, highlight_md=highlight_md)
+            with open(args.html_es, "w", encoding="utf-8") as f:
+                f.write(page_es)
+            print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)
+        else:
+            print("[es] Traduccion no disponible", file=sys.stderr)
+    else:
+        print("[es] Sin API key -> version en espanol omitida", file=sys.stderr)
+
+    if args.email:
+        today = dt.datetime.now().strftime("%Y-%m-%d")
+        send_email(f"Cyber Daily Brief — {today}", md)
+    else:
+        print("\n" + md)
+
+
+if __name__ == "__main__":
+    main()

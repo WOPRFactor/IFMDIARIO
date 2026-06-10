@@ -1,0 +1,42 @@
+name: Cyber Daily Brief
+
+on:
+  schedule:
+    # 11:00 UTC = 08:00 Argentina (UTC-3). Ajusta si cambia la zona.
+    - cron: "15 11 * * *"
+  workflow_dispatch:
+
+jobs:
+  build-and-send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generar y enviar informe
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          # Destinatario especifico para cyber. Si no existe, usa MAIL_TO.
+          MAIL_TO_CYBER: ${{ secrets.MAIL_TO_CYBER }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          # Opcional: activa el resumen por IA y la version en espanol.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 brief_cyber.py --email --out cyber_brief.md --out-es cyber_brief_es.md
+
+      - name: Guardar informes como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyber-daily-brief
+          path: |
+            cyber_brief.md
+            cyber_brief_es.md
+          retention-days: 30
