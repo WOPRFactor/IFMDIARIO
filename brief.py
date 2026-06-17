@@ -436,8 +436,12 @@ def build_html_page(items, errors, analysis=None, norm=None):
             summ_en = f'<p class="summary">{esc(it["summary"])}</p>' if it["summary"] else ""
             summ_es = (f'<p class="summary-es"><span class="es-label">ES</span> {esc(it["summary_es"])}</p>'
                        if it.get("summary_es") else "")
+            data_attrs = brief_ai.card_data_attrs(
+                it["category"], it["source"],
+                f'{it["title"]} {it.get("summary", "")} {it.get("summary_es", "")}',
+                it.get("important"))
             cards.append(
-                f'<article class="card{"  card-imp" if it.get("important") else ""}">'
+                f'<article class="card{"  card-imp" if it.get("important") else ""}" {data_attrs}>'
                 f'<h3>{important_badge}<a href="{esc(it["link"])}" target="_blank" rel="noopener">{esc(it["title"])}</a></h3>'
                 f'<div class="meta">{esc(it["source"])} &middot; {date_str} UTC</div>'
                 f'{summ_en}{summ_es}'
@@ -457,6 +461,9 @@ def build_html_page(items, errors, analysis=None, norm=None):
             f'<details class="errors"><summary>Fuentes con error ({len(errors)})</summary>'
             f'<ul>{err_items}</ul></details>'
         )
+
+    filter_bar = brief_ai.filter_bar_html("Fuente") if sections else ""
+    filter_js = brief_ai.filter_script() if sections else ""
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -541,10 +548,12 @@ def build_html_page(items, errors, analysis=None, norm=None):
       <div class="mode">{modo}</div>
       {highlight_html}
     </div>
+    {filter_bar}
     {"".join(sections) if sections else "<p class='empty'>Sin novedades relevantes hoy.</p>"}
     {errors_html}
     <footer>Generado automaticamente. Cada titulo enlaza a la fuente original.</footer>
   </div>
+  {filter_js}
 </body>
 </html>"""
 

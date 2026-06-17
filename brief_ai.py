@@ -299,3 +299,107 @@ def analysis_to_html(analysis, norm, cat_color):
         parts.append(f'<ul class="highlights">{"".join(dest_lis)}</ul>')
 
     return "\n".join(parts) if parts else None
+
+
+# ----------------------------------------------------------------------------
+# FILTROS INTERACTIVOS (client-side) — compartidos por las tres paginas
+# Las tarjetas llevan data-cat / data-imp / data-src / data-text; estas dos
+# funciones inyectan la barra de controles y el JS que filtra en el navegador.
+# ----------------------------------------------------------------------------
+
+def card_data_attrs(category, source, text, important):
+    """Devuelve los atributos data-* (ya escapados) para una tarjeta .card."""
+    blob = _esc((text or "").lower())
+    return (
+        f'data-cat="{_esc(category)}" '
+        f'data-src="{_esc(source) or "—"}" '
+        f'data-imp="{"1" if important else "0"}" '
+        f'data-text="{blob}"'
+    )
+
+
+def filter_bar_html(source_label="Fuente"):
+    """HTML + estilos de la barra de filtros. Categorias y fuentes se completan
+    solas via JS (filter_script) leyendo los data-* de las tarjetas."""
+    return (
+        "<style>"
+        ".filters{background:#fff;border:1px solid #e5e7eb;border-radius:12px;"
+        "padding:14px 16px;margin:0 0 26px}"
+        ".fchips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}"
+        ".fchip{font:600 12px/1 inherit;cursor:pointer;border:1px solid #cbd2dc;"
+        "background:#f8f9fb;color:#374151;border-radius:20px;padding:6px 13px}"
+        ".fchip.on{background:#1a1c23;color:#fff;border-color:#1a1c23}"
+        ".frow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}"
+        ".filters input[type=search]{flex:1;min-width:150px;font-size:14px;"
+        "padding:7px 11px;border:1px solid #cbd2dc;border-radius:8px}"
+        ".filters select{font-size:13px;padding:7px 9px;border:1px solid #cbd2dc;"
+        "border-radius:8px;background:#fff;max-width:200px}"
+        ".ftoggle{font-size:13px;color:#374151;display:flex;align-items:center;"
+        "gap:5px;cursor:pointer;white-space:nowrap}"
+        ".fcount{font-size:12px;color:#6b7280;margin-left:auto}"
+        "</style>"
+        '<div class="filters">'
+        '<div class="fchips" id="f-cats"></div>'
+        '<div class="frow">'
+        '<input type="search" id="f-q" placeholder="Buscar en titulo y resumen...">'
+        f'<select id="f-src"><option value="">{_esc(source_label)} (todas)</option></select>'
+        '<label class="ftoggle"><input type="checkbox" id="f-imp"> Solo importantes</label>'
+        '<span class="fcount" id="f-count"></span>'
+        "</div></div>"
+    )
+
+
+def filter_script():
+    """JS vanilla: filtra por categoria, fuente, importantes y texto; oculta las
+    secciones que quedan vacias. Auto-descubre categorias y fuentes del DOM."""
+    return """<script>
+(function(){
+  var cards=[].slice.call(document.querySelectorAll('.card'));
+  var sections=[].slice.call(document.querySelectorAll('section'));
+  var catBox=document.getElementById('f-cats');
+  var srcSel=document.getElementById('f-src');
+  var impChk=document.getElementById('f-imp');
+  var q=document.getElementById('f-q');
+  var countEl=document.getElementById('f-count');
+  if(!catBox) return;
+  var active={}, cats=[], srcs=[];
+  cards.forEach(function(c){
+    var cat=c.getAttribute('data-cat')||'', src=c.getAttribute('data-src')||'';
+    if(cat&&cats.indexOf(cat)<0)cats.push(cat);
+    if(src&&src!=='\\u2014'&&srcs.indexOf(src)<0)srcs.push(src);
+  });
+  cats.forEach(function(cat){
+    var b=document.createElement('button');
+    b.type='button'; b.className='fchip'; b.textContent=cat;
+    b.addEventListener('click',function(){
+      if(active[cat]){delete active[cat];b.classList.remove('on');}
+      else{active[cat]=1;b.classList.add('on');}
+      apply();
+    });
+    catBox.appendChild(b);
+  });
+  srcs.sort().forEach(function(s){
+    var o=document.createElement('option'); o.value=s; o.textContent=s; srcSel.appendChild(o);
+  });
+  function apply(){
+    var anyCat=Object.keys(active).length>0, src=srcSel.value,
+        imp=impChk.checked, t=(q.value||'').trim().toLowerCase(), vis=0;
+    cards.forEach(function(c){
+      var ok=(!anyCat||active[c.getAttribute('data-cat')])
+        &&(!src||c.getAttribute('data-src')===src)
+        &&(!imp||c.getAttribute('data-imp')==='1')
+        &&(!t||(c.getAttribute('data-text')||'').indexOf(t)>=0);
+      c.style.display=ok?'':'none'; if(ok)vis++;
+    });
+    sections.forEach(function(sec){
+      var has=[].some.call(sec.querySelectorAll('.card'),function(c){return c.style.display!=='none';});
+      sec.style.display=has?'':'none';
+    });
+    if(countEl)countEl.textContent=vis+' visibles';
+  }
+  srcSel.addEventListener('change',apply);
+  impChk.addEventListener('change',apply);
+  q.addEventListener('input',apply);
+  apply();
+})();
+</script>"""

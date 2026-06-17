@@ -329,8 +329,12 @@ def build_html_page(repos, errors, analysis=None, norm=None):
             desc_es = (f'<p class="summary-es"><span class="es-label">ES</span> {esc(r["description_es"])}</p>'
                        if r.get("description_es") else "")
             lang = f'<span class="lang">{esc(r["language"])}</span>' if r["language"] else ""
+            data_attrs = brief_ai.card_data_attrs(
+                r["category"], r["language"],
+                f'{r["name"]} {r.get("description", "")} {r.get("description_es", "")} {" ".join(r["topics"])}',
+                r.get("important"))
             cards.append(
-                f'<article class="card{"  card-imp" if r.get("important") else ""}">'
+                f'<article class="card{"  card-imp" if r.get("important") else ""}" {data_attrs}>'
                 f'<h3>{important_badge}<a href="{esc(r["url"])}" target="_blank" rel="noopener">{esc(r["name"])}</a>'
                 f' <span class="stars">★{r["stars"]:,}</span></h3>'
                 f'<div class="meta">{lang} · actualizado {fmt_date(r["pushed_at"])}</div>'
@@ -352,6 +356,9 @@ def build_html_page(repos, errors, analysis=None, norm=None):
             f'<details class="errors"><summary>Busquedas con error ({len(errors)})</summary>'
             f'<ul>{err_items}</ul></details>'
         )
+
+    filter_bar = brief_ai.filter_bar_html("Lenguaje") if sections else ""
+    filter_js = brief_ai.filter_script() if sections else ""
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -433,10 +440,12 @@ def build_html_page(repos, errors, analysis=None, norm=None):
       <div class="mode">{modo}</div>
       {highlight_html}
     </div>
+    {filter_bar}
     {"".join(sections) if sections else "<p>Sin resultados.</p>"}
     {errors_html}
     <footer>Generado automaticamente via GitHub Search API. Cada repo enlaza a GitHub.</footer>
   </div>
+  {filter_js}
 </body>
 </html>"""
 
