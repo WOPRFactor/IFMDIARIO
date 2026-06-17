@@ -176,6 +176,73 @@ def translate(norm):
     return out or None
 
 
+def executive_brief(reports, audience):
+    """Sintesis ejecutiva de alto nivel cruzando varios informes, en UN llamado.
+
+    reports: lista de dicts {"report": <nombre>, "items": [{category, title,
+             summary, link, source, important}, ...]}.
+    audience: rol destino (ej. 'un CAIO/CISO ejecutivo').
+
+    Devuelve {"resumen": <texto>, "top": [{report, category, title, link, porque}]}
+    o None si no hay datos / IA no disponible (el llamador hace fallback).
+    """
+    catalog_items, lines, g = [], [], 0
+    for rep in reports:
+        # los marcados important primero, para que entren si hay tope
+        items = sorted(rep.get("items", []),
+                       key=lambda x: (not x.get("important"),))
+        for it in items[:20]:
+            catalog_items.append({**it, "report": rep["report"]})
+            mark = "*" if it.get("important") else " "
+            lines.append(
+                f"[{g}]{mark} ({rep['report']} / {it.get('category', '')}) "
+                f"{it.get('title', '')} — {(it.get('summary') or '')[:160]}"
+            )
+            g += 1
+            if g >= 50:
+                break
+        if g >= 50:
+            break
+    if not catalog_items:
+        return None
+
+    system = (
+        f"Sos analista ejecutivo para {audience}. Te paso titulares de HOY de "
+        "tres frentes (IA y gobernanza, ciberseguridad, repos de GitHub). Los "
+        "marcados con '*' vienen pre-priorizados. Escribi un brief EJECUTIVO de "
+        "alto nivel, en espanol rioplatense. Devolve SOLO un JSON valido con esta "
+        "forma EXACTA:\n"
+        '{"resumen": "<3 a 5 frases: el panorama del dia CRUZANDO los tres '
+        'frentes, que implica para la organizacion y que conviene vigilar>", '
+        '"destacadas": [{"g": <numero>, "porque": "<1 frase: por que es de lo mas '
+        'importante hoy>"}]}\n'
+        "Elegi 5 a 8 destacadas: las MAS importantes en conjunto (riesgo, "
+        "regulacion, impacto de negocio), sin importar de que frente vengan. Usa "
+        "solo indices 'g' que existan en la lista."
+    )
+    parsed = _groq_json(system, "Titulares:\n" + "\n".join(lines), max_tokens=1800)
+    if not isinstance(parsed, dict):
+        return None
+
+    top = []
+    for d in parsed.get("destacadas", []):
+        try:
+            it = catalog_items[int(d["g"])]
+        except (KeyError, ValueError, IndexError, TypeError):
+            continue
+        top.append({
+            "report": it.get("report", ""),
+            "category": it.get("category", ""),
+            "title": it.get("title", ""),
+            "link": it.get("link", ""),
+            "porque": (d.get("porque") or "").strip(),
+        })
+    resumen = (parsed.get("resumen") or "").strip()
+    if not resumen and not top:
+        return None
+    return {"resumen": resumen, "top": top}
+
+
 # ----------------------------------------------------------------------------
 # RENDER DEL BLOQUE EJECUTIVO (compartido por los tres informes)
 # ----------------------------------------------------------------------------

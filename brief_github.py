@@ -521,6 +521,8 @@ def main():
                         help="archivo HTML para GitHub Pages")
     parser.add_argument("--html-es", default="github_index_es.html",
                         help="archivo HTML en espanol")
+    parser.add_argument("--json", default="",
+                        help="exporta los repos a JSON (insumo del informe ejecutivo)")
     parser.add_argument("--no-llm", action="store_true",
                         help="modo simple sin IA")
     args = parser.parse_args()
@@ -538,6 +540,19 @@ def main():
     norm = [{"idx": i, "category": r["category"], "title": r["name"],
              "summary": r["description"], "link": r["url"]}
             for i, r in enumerate(repos)]
+
+    # Exporta los repos para el informe ejecutivo (brief_exec.py los combina).
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump({
+                "report": "GitHub Repos",
+                "html": os.path.basename(args.html),
+                "items": [{"category": r["category"], "title": r["name"],
+                           "summary": r["description"], "link": r["url"],
+                           "source": r["language"], "important": bool(r.get("important"))}
+                          for r in repos],
+            }, f, ensure_ascii=False)
+        print(f"[json] repos exportados a {args.json}", file=sys.stderr)
 
     analysis = None
     use_ai = not args.no_llm and brief_ai.ai_available()

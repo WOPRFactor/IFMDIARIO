@@ -622,6 +622,8 @@ def main():
                         help="archivo HTML de salida para la web (GitHub Pages)")
     parser.add_argument("--html-es", default="index_es.html",
                         help="archivo HTML en español para la web")
+    parser.add_argument("--json", default="",
+                        help="exporta los items a JSON (insumo del informe ejecutivo)")
     parser.add_argument("--no-llm", action="store_true",
                         help="forzar modo simple aunque haya API key")
     args = parser.parse_args()
@@ -639,6 +641,20 @@ def main():
     norm = [{"idx": i, "category": it["category"], "title": it["title"],
              "summary": it["summary"], "link": it["link"]}
             for i, it in enumerate(items)]
+
+    # Exporta los items para el informe ejecutivo (brief_exec.py los combina).
+    if args.json:
+        import json as _json
+        with open(args.json, "w", encoding="utf-8") as f:
+            _json.dump({
+                "report": "IA & Gobernanza",
+                "html": os.path.basename(args.html),
+                "items": [{"category": it["category"], "title": it["title"],
+                           "summary": it["summary"], "link": it["link"],
+                           "source": it["source"], "important": bool(it.get("important"))}
+                          for it in items],
+            }, f, ensure_ascii=False)
+        print(f"[json] items exportados a {args.json}", file=sys.stderr)
 
     # Capa de IA (Groq) con fallback automatico al modo simple.
     analysis = None

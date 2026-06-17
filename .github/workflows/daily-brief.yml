@@ -35,7 +35,7 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
-        run: python3 brief.py --out brief.md --out-es brief_es.md --html ia.html --html-es ia_es.html
+        run: python3 brief.py --out brief.md --out-es brief_es.md --html ia.html --html-es ia_es.html --json brief_items.json
       - uses: actions/upload-artifact@v4
         with:
           name: brief-ia
@@ -44,6 +44,7 @@ jobs:
             brief_es.md
             ia.html
             ia_es.html
+            brief_items.json
           retention-days: 30
 
   # --- Informe Ciberseguridad ---
@@ -66,7 +67,7 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
-        run: python3 brief_cyber.py --out cyber_brief.md --out-es cyber_brief_es.md --html cyber.html --html-es cyber_es.html
+        run: python3 brief_cyber.py --out cyber_brief.md --out-es cyber_brief_es.md --html cyber.html --html-es cyber_es.html --json cyber_items.json
       - uses: actions/upload-artifact@v4
         with:
           name: brief-cyber
@@ -75,6 +76,7 @@ jobs:
             cyber_brief_es.md
             cyber.html
             cyber_es.html
+            cyber_items.json
           retention-days: 30
 
   # --- Informe GitHub Repos ---
@@ -97,7 +99,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_SEARCH_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
-        run: python3 brief_github.py --out github_brief.md --out-es github_brief_es.md --html github.html --html-es github_es.html
+        run: python3 brief_github.py --out github_brief.md --out-es github_brief_es.md --html github.html --html-es github_es.html --json github_items.json
       - uses: actions/upload-artifact@v4
         with:
           name: brief-github
@@ -106,10 +108,11 @@ jobs:
             github_brief_es.md
             github.html
             github_es.html
+            github_items.json
           retention-days: 30
 
-  # --- Email unico con los tres informes ---
-  email:
+  # --- Informe ejecutivo + email unico ---
+  resumen:
     needs: [brief-ia, brief-cyber, brief-github]
     runs-on: ubuntu-latest
     steps:
@@ -122,7 +125,17 @@ jobs:
         with:
           path: _reports
           merge-multiple: true
-      - name: Enviar email unico
+      - name: Generar informe ejecutivo
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: python3 brief_exec.py --out resumen.html --out-md _reports/_exec.md _reports/brief_items.json _reports/cyber_items.json _reports/github_items.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resumen
+          path: resumen.html
+          retention-days: 30
+      - name: Enviar email unico (ejecutivo + los tres informes)
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -130,14 +143,14 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-        # Manda los tres informes juntos. Para recibir las versiones con las
-        # noticias traducidas al espanol, cambia los .md por sus variantes _es.md
-        # (brief_es.md, cyber_brief_es.md, github_brief_es.md).
-        run: python3 send_digest.py _reports/brief.md _reports/cyber_brief.md _reports/github_brief.md
+        # El _exec.md va primero -> el email arranca con el resumen ejecutivo.
+        # Para recibir las noticias traducidas al espanol, cambia los .md por sus
+        # variantes _es.md (brief_es.md, cyber_brief_es.md, github_brief_es.md).
+        run: python3 send_digest.py _reports/_exec.md _reports/brief.md _reports/cyber_brief.md _reports/github_brief.md
 
   # --- Deploy a GitHub Pages ---
   deploy:
-    needs: [brief-ia, brief-cyber, brief-github]
+    needs: [brief-ia, brief-cyber, brief-github, resumen]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

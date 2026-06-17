@@ -640,6 +640,8 @@ def main():
                         help="archivo HTML para GitHub Pages")
     parser.add_argument("--html-es", default="cyber_index_es.html",
                         help="archivo HTML en espanol")
+    parser.add_argument("--json", default="",
+                        help="exporta los items a JSON (insumo del informe ejecutivo)")
     parser.add_argument("--no-llm", action="store_true",
                         help="forzar modo simple aunque haya API key")
     args = parser.parse_args()
@@ -656,6 +658,19 @@ def main():
     norm = [{"idx": i, "category": it["category"], "title": it["title"],
              "summary": it["summary"], "link": it["link"]}
             for i, it in enumerate(items)]
+
+    # Exporta los items para el informe ejecutivo (brief_exec.py los combina).
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump({
+                "report": "Ciberseguridad",
+                "html": os.path.basename(args.html),
+                "items": [{"category": it["category"], "title": it["title"],
+                           "summary": it["summary"], "link": it["link"],
+                           "source": it["source"], "important": bool(it.get("important"))}
+                          for it in items],
+            }, f, ensure_ascii=False)
+        print(f"[json] items exportados a {args.json}", file=sys.stderr)
 
     analysis = None
     use_ai = not args.no_llm and brief_ai.ai_available()
