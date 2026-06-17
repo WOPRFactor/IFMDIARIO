@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Salidas generadas por los briefs (se publican via GitHub Pages / artifacts)
+*.md
+!README.md
+brief_es.md
+*.html
+!portal.html

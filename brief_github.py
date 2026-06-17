@@ -31,6 +31,8 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlencode
 
+import brief_ai  # capa de IA compartida (Groq) con fallback a modo simple
+
 # ----------------------------------------------------------------------------
 # BUSQUEDAS
 # Cada entrada: (categoria, etiqueta, query GitHub Search)
@@ -72,9 +74,6 @@ IMPORTANT_KEYWORDS = [
     "breakthrough", "release", "new model", "state of the art", "sota",
     "autonomous", "agent framework", "production", "open source",
 ]
-
-LLM_MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
-LLM_MAX_OUTPUT_TOKENS = 1500
 
 
 # ----------------------------------------------------------------------------
@@ -195,158 +194,12 @@ def collect():
 
 
 # ----------------------------------------------------------------------------
-# CAPA LLM OPCIONAL
+# CAPA DE IA (Groq) -- ver brief_ai.py
+# Si hay GROQ_API_KEY se genera resumen ejecutivo, deteccion de tendencias,
+# priorizacion con propuestas de accion y traduccion real al espanol. Sin key
+# (o si la llamada falla) se cae limpiamente al modo simple. Toda la logica de
+# IA vive en brief_ai.py.
 # ----------------------------------------------------------------------------
-
-def llm_available():
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
-
-
-def llm_highlight(repos):
-    """Pide a Claude que destaque los repos mas interesantes."""
-    from urllib.request import Request as _Req, urlopen as _open
-    from urllib.error import URLError as _URLErr, HTTPError as _HTTPErr
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key or not repos:
-        return None
-
-    catalog = []
-    for i, r in enumerate(repos[:60]):
-        topics = ", ".join(r["topics"]) if r["topics"] else ""
-        catalog.append(
-            f"[{i}] ({r['category']}) {r['name']} ★{r['stars']} "
-            f"— {r['description']} [{topics}]"
-        )
-
-    system = (
-        "Sos analista tecnico para un CAIO/CISO. Te paso una lista de repositorios "
-        "GitHub recientes sobre IA, agentes y ciberseguridad. "
-        "Elegi los 5 a 7 MAS RELEVANTES para un ejecutivo tecnico "
-        "(priorizando herramientas practicas, exploits activos, frameworks nuevos "
-        "con traccion, o proyectos que cambian el estado del arte). "
-        "Para cada uno escribi UNA frase explicando por que es importante, "
-        "en espanol, concreta. "
-        "Devolve SOLO JSON valido: "
-        '{"destacados": [{"idx": <numero>, "porque": "<una frase>"}]}'
-    )
-
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "max_tokens": LLM_MAX_OUTPUT_TOKENS,
-        "system": system,
-        "messages": [{"role": "user", "content": "\n".join(catalog)}],
-    }).encode("utf-8")
-
-    req = _Req(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-
-    try:
-        with _open(req, timeout=40) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (_HTTPErr, _URLErr, TimeoutError, ValueError) as e:
-        print(f"[llm] error ({e}): modo simple", file=sys.stderr)
-        return None
-
-    try:
-        text = "".join(
-            block.get("text", "")
-            for block in data.get("content", [])
-            if block.get("type") == "text"
-        ).strip()
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
-        parsed = json.loads(text)
-        destacados = parsed.get("destacados", [])
-    except (ValueError, KeyError, AttributeError) as e:
-        print(f"[llm] no parseable ({e}): modo simple", file=sys.stderr)
-        return None
-
-    if not destacados:
-        return None
-
-    out = []
-    for d in destacados:
-        try:
-            r = repos[int(d["idx"])]
-        except (KeyError, ValueError, IndexError, TypeError):
-            continue
-        porque = str(d.get("porque", ""))[:300]
-        stars = f"★{r['stars']:,}"
-        out.append(f"- **[{r['category']}]** [{r['name']}]({r['url']}) {stars}  ")
-        if porque:
-            out.append(f"  _{porque}_")
-    return "\n".join(out) if out else None
-
-
-def llm_translate_repos(repos):
-    """Traduce descripciones al espanol via Claude."""
-    from urllib.request import Request as _Req, urlopen as _open
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key or not repos:
-        return None
-
-    catalog = [{"i": i, "d": r["description"]}
-               for i, r in enumerate(repos[:60]) if r["description"]]
-
-    system = (
-        "Traducí cada 'd' (description) al español rioplatense, tecnico y preciso. "
-        "Mantené nombres propios, siglas tecnicas y nombres de proyectos sin traducir. "
-        "Devolve SOLO JSON valido: "
-        '{"items": [{"i": <numero>, "d": "<descripcion traducida>"}]}'
-    )
-
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "max_tokens": 3000,
-        "system": system,
-        "messages": [{"role": "user", "content": json.dumps(catalog, ensure_ascii=False)}],
-    }).encode("utf-8")
-
-    req = _Req(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-
-    try:
-        with _open(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        print(f"[translate] error ({e}): omitido", file=sys.stderr)
-        return None
-
-    try:
-        text = "".join(
-            block.get("text", "")
-            for block in data.get("content", [])
-            if block.get("type") == "text"
-        ).strip()
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
-        translations = {entry["i"]: entry["d"] for entry in json.loads(text).get("items", [])}
-    except Exception as e:
-        print(f"[translate] no parseable ({e}): omitido", file=sys.stderr)
-        return None
-
-    translated = copy.deepcopy(repos)
-    for i, r in enumerate(translated[:60]):
-        if i in translations:
-            r["description"] = translations[i]
-    return translated
-
 
 # ----------------------------------------------------------------------------
 # GENERACION DEL INFORME
@@ -370,7 +223,7 @@ def fmt_date(iso):
         return iso[:10]
 
 
-def build_markdown(repos, errors, highlight_md=None):
+def build_markdown(repos, errors, analysis=None, norm=None):
     today = dt.datetime.now().strftime("%Y-%m-%d")
     lines = []
     lines.append(f"# GitHub Repos Brief — {today}")
@@ -380,10 +233,11 @@ def build_markdown(repos, errors, highlight_md=None):
     lines.append("")
     lines.append("## Destacados")
 
-    if highlight_md:
-        lines.append("_Seleccion y analisis por IA (Claude)_")
+    analysis_md = brief_ai.analysis_to_markdown(analysis, norm or []) if analysis else None
+    if analysis_md:
+        lines.append(f"_Analisis por IA ({brief_ai.provider_label()})_")
         lines.append("")
-        lines.append(highlight_md)
+        lines.append(analysis_md)
     else:
         top = sorted(repos, key=lambda r: r["stars"], reverse=True)[:6]
         for r in top:
@@ -437,29 +291,17 @@ def build_markdown(repos, errors, highlight_md=None):
     return "\n".join(lines)
 
 
-def build_html_page(repos, errors, highlight_md=None):
+def build_html_page(repos, errors, analysis=None, norm=None):
     today_h = dt.datetime.now().strftime("%d/%m/%Y")
     gen_h = dt.datetime.now().strftime("%H:%M")
 
     def esc(s):
         return html.escape(s or "")
 
-    if highlight_md:
-        modo = "Seleccion y analisis por IA"
-        hi_html = []
-        for line in highlight_md.split("\n"):
-            line = line.strip()
-            m = re.match(r"- \*\*\[(.+?)\]\*\* \[(.+?)\]\((.+?)\) (★[\d,]+)\s*$", line)
-            if m:
-                color = CAT_COLOR.get(m.group(1), "#555")
-                hi_html.append(
-                    f'<li><span class="tag" style="--c:{color}">{esc(m.group(1))}</span> '
-                    f'<a href="{esc(m.group(3))}" target="_blank" rel="noopener">{esc(m.group(2))}</a> '
-                    f'<span class="stars">{esc(m.group(4))}</span>'
-                )
-            elif line.startswith("_") and line.endswith("_"):
-                hi_html.append(f'<div class="why">{esc(line.strip("_ "))}</div></li>')
-        highlight_html = "<ul class='highlights'>" + "\n".join(hi_html) + "</ul>"
+    analysis_html = brief_ai.analysis_to_html(analysis, norm or [], CAT_COLOR) if analysis else None
+    if analysis_html:
+        modo = f"Analisis por IA · {brief_ai.provider_label()}"
+        highlight_html = analysis_html
     else:
         modo = "Top repos por estrellas"
         top = sorted(repos, key=lambda r: r["stars"], reverse=True)[:6]
@@ -679,38 +521,61 @@ def main():
     print(f"  {len(repos)} repos unicos, {len(errors)} busquedas con error", file=sys.stderr)
 
     mark_important(repos)
-    print("[traduccion] Traduciendo descripciones al espanol...", file=sys.stderr)
+    print("[traduccion] Traduciendo descripciones al espanol (Google)...", file=sys.stderr)
     add_translations(repos)
 
-    highlight_md = None
+    # Lista normalizada para la capa de IA (idx alineado con `repos`).
+    # title = nombre del repo, summary = descripcion, link = url.
+    norm = [{"idx": i, "category": r["category"], "title": r["name"],
+             "summary": r["description"], "link": r["url"]}
+            for i, r in enumerate(repos)]
+
+    analysis = None
+    use_ai = not args.no_llm and brief_ai.ai_available()
     if args.no_llm:
         print("[modo] simple (forzado por --no-llm)", file=sys.stderr)
-    elif not llm_available():
-        print("[modo] simple (sin ANTHROPIC_API_KEY)", file=sys.stderr)
+    elif not brief_ai.ai_available():
+        print("[modo] simple (sin GROQ_API_KEY)", file=sys.stderr)
     else:
-        print("[modo] intentando destacado por IA...", file=sys.stderr)
-        highlight_md = llm_highlight(repos)
-        if highlight_md:
-            print("[modo] IA OK", file=sys.stderr)
-        else:
-            print("[modo] IA no disponible -> fallback simple", file=sys.stderr)
+        print("[modo] analizando con IA (Groq)...", file=sys.stderr)
+        analysis = brief_ai.analyze(norm, "un CAIO/CISO tecnico")
+        print("[modo] IA OK" if analysis else "[modo] IA no disponible -> simple",
+              file=sys.stderr)
 
-    md = build_markdown(repos, errors, highlight_md=highlight_md)
+    # --- Salida en ingles (repos originales) ---
+    md = build_markdown(repos, errors, analysis=analysis, norm=norm)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(md)
     print(f"Informe escrito en {args.out}", file=sys.stderr)
 
-    page = build_html_page(repos, errors, highlight_md=highlight_md)
+    page = build_html_page(repos, errors, analysis=analysis, norm=norm)
     with open(args.html, "w", encoding="utf-8") as f:
         f.write(page)
     print(f"Pagina web escrita en {args.html}", file=sys.stderr)
 
-    # Version en espanol: usa repos ya traducidos por Google Translate (siempre disponible).
-    md_es = build_markdown(repos, errors, highlight_md=highlight_md)
+    # --- Salida en espanol: traduccion real de la descripcion con IA ---
+    # (el nombre del repo no se traduce: es un identificador)
+    repos_es, norm_es = repos, norm
+    translations = brief_ai.translate(norm) if use_ai else None
+    if translations:
+        print(f"[es] {len(translations)} repos traducidos con IA", file=sys.stderr)
+        repos_es = copy.deepcopy(repos)
+        for i, r in enumerate(repos_es):
+            tr = translations.get(i)
+            if tr and tr["summary"]:
+                r["description"] = tr["summary"]
+                r["description_es"] = ""  # ya esta todo en ES; evita duplicar
+        norm_es = [{"idx": i, "category": r["category"], "title": r["name"],
+                    "summary": r["description"], "link": r["url"]}
+                   for i, r in enumerate(repos_es)]
+    else:
+        print("[es] sin traduccion IA -> usa descripciones de Google Translate", file=sys.stderr)
+
+    md_es = build_markdown(repos_es, errors, analysis=analysis, norm=norm_es)
     with open(args.out_es, "w", encoding="utf-8") as f:
         f.write(md_es)
     print(f"[es] Informe en espanol escrito en {args.out_es}", file=sys.stderr)
-    page_es = build_html_page(repos, errors, highlight_md=highlight_md)
+    page_es = build_html_page(repos_es, errors, analysis=analysis, norm=norm_es)
     with open(args.html_es, "w", encoding="utf-8") as f:
         f.write(page_es)
     print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)

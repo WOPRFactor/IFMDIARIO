@@ -27,6 +27,8 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from xml.etree import ElementTree as ET
 
+import brief_ai  # capa de IA compartida (Groq) con fallback a modo simple
+
 # ----------------------------------------------------------------------------
 # FUENTES
 # ----------------------------------------------------------------------------
@@ -101,10 +103,6 @@ IMPORTANT_KEYWORDS = [
     "patch now", "immediate", "actively being exploited", "in the wild",
     "mass exploitation", "widespread", "critical infrastructure",
 ]
-
-LLM_MODEL = os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001")
-LLM_MAX_INPUT_ITEMS = 60
-LLM_MAX_OUTPUT_TOKENS = 1800
 
 
 # ----------------------------------------------------------------------------
@@ -321,163 +319,12 @@ def collect():
 
 
 # ----------------------------------------------------------------------------
-# CAPA LLM OPCIONAL
+# CAPA DE IA (Groq) -- ver brief_ai.py
+# Si hay GROQ_API_KEY se genera resumen ejecutivo, deteccion de tendencias,
+# priorizacion con propuestas de accion y traduccion real al espanol. Sin key
+# (o si la llamada falla) se cae limpiamente al modo simple. Toda la logica de
+# IA vive en brief_ai.py.
 # ----------------------------------------------------------------------------
-
-def llm_available():
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
-
-
-def llm_highlight(items):
-    """Pide a Claude que seleccione y explique las amenazas mas criticas."""
-    from urllib.request import Request as _Req, urlopen as _open
-    from urllib.error import URLError as _URLErr, HTTPError as _HTTPErr
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key or not items:
-        return None
-
-    catalog = []
-    for i, it in enumerate(items[:LLM_MAX_INPUT_ITEMS]):
-        catalog.append(
-            f"[{i}] ({it['category']}) {it['title']} — {it['summary'][:200]}"
-        )
-
-    system = (
-        "Sos analista de ciberseguridad para un CISO. Te paso titulares de amenazas, "
-        "vulnerabilidades y novedades de seguridad. "
-        "Elegi las 5 a 7 MAS CRITICAS (priorizando zero-days activamente explotados, "
-        "ransomware activo, CVEs criticos en infraestructura comun, y alertas de vendors "
-        "importantes como Cisco, Fortinet, Check Point). "
-        "Para cada una escribi UNA frase de por que es urgente, en espanol, clara y concreta. "
-        "Devolve SOLO un JSON valido, sin texto extra: "
-        '{"destacadas": [{"idx": <numero>, "porque": "<una frase>"}]}'
-    )
-    user = f"Titulares:\n" + "\n".join(catalog)
-
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "max_tokens": LLM_MAX_OUTPUT_TOKENS,
-        "system": system,
-        "messages": [{"role": "user", "content": user}],
-    }).encode("utf-8")
-
-    req = _Req(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-
-    try:
-        with _open(req, timeout=40) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except _HTTPErr as e:
-        print(f"[llm] HTTP {e.code}: modo simple", file=sys.stderr)
-        return None
-    except (_URLErr, TimeoutError, ValueError) as e:
-        print(f"[llm] error ({e}): modo simple", file=sys.stderr)
-        return None
-
-    try:
-        text = "".join(
-            block.get("text", "")
-            for block in data.get("content", [])
-            if block.get("type") == "text"
-        ).strip()
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
-        parsed = json.loads(text)
-        destacadas = parsed.get("destacadas", [])
-    except (ValueError, KeyError, AttributeError) as e:
-        print(f"[llm] respuesta no parseable ({e}): modo simple", file=sys.stderr)
-        return None
-
-    if not destacadas:
-        return None
-
-    out = []
-    for d in destacadas:
-        try:
-            idx = int(d["idx"])
-            it = items[idx]
-        except (KeyError, ValueError, IndexError, TypeError):
-            continue
-        porque = clean_text(str(d.get("porque", "")))[:300]
-        out.append(f"- **[{it['category']}]** {it['title']}  ")
-        if porque:
-            out.append(f"  _{porque}_  ")
-        out.append(f"  [Leer mas]({it['link']})")
-    return "\n".join(out) if out else None
-
-
-def llm_translate_items(items):
-    """Traduce titulos y resumenes al espanol via Claude."""
-    from urllib.request import Request as _Req, urlopen as _open
-    from urllib.error import URLError as _URLErr, HTTPError as _HTTPErr
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key or not items:
-        return None
-
-    catalog = [{"i": i, "t": it["title"], "s": it["summary"][:200]}
-               for i, it in enumerate(items[:LLM_MAX_INPUT_ITEMS])]
-
-    system = (
-        "Sos un traductor tecnico de ciberseguridad. "
-        "Traducí cada 't' (title) y 's' (summary) al español rioplatense, preciso y tecnico. "
-        "Mantene los nombres de CVEs, productos y marcas sin traducir. "
-        "Devolve SOLO JSON valido: "
-        '{"items": [{"i": <numero>, "t": "<titulo>", "s": "<resumen>"}]}'
-    )
-
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "max_tokens": 4000,
-        "system": system,
-        "messages": [{"role": "user", "content": json.dumps(catalog, ensure_ascii=False)}],
-    }).encode("utf-8")
-
-    req = _Req(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-
-    try:
-        with _open(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        print(f"[translate] error ({e}): omitido", file=sys.stderr)
-        return None
-
-    try:
-        text = "".join(
-            block.get("text", "")
-            for block in data.get("content", [])
-            if block.get("type") == "text"
-        ).strip()
-        text = re.sub(r"^```(?:json)?|```$", "", text.strip()).strip()
-        translations = {entry["i"]: entry for entry in json.loads(text).get("items", [])}
-    except Exception as e:
-        print(f"[translate] no parseable ({e}): omitido", file=sys.stderr)
-        return None
-
-    translated = copy.deepcopy(items)
-    for i, it in enumerate(translated[:LLM_MAX_INPUT_ITEMS]):
-        if i in translations:
-            it["title"] = clean_text(translations[i].get("t", it["title"]))
-            it["summary"] = clean_text(translations[i].get("s", it["summary"]))
-    return translated
-
 
 # ----------------------------------------------------------------------------
 # GENERACION DEL INFORME
@@ -500,7 +347,7 @@ CAT_COLOR = {
 }
 
 
-def build_markdown(items, errors, highlight_md=None):
+def build_markdown(items, errors, analysis=None, norm=None):
     today = dt.datetime.now().strftime("%Y-%m-%d")
     lines = []
     lines.append(f"# Cyber Daily Brief — {today}")
@@ -510,10 +357,11 @@ def build_markdown(items, errors, highlight_md=None):
     lines.append("")
     lines.append("## Resumen ejecutivo — amenazas criticas")
 
-    if highlight_md:
-        lines.append("_Seleccion y analisis por IA (Claude)_")
+    analysis_md = brief_ai.analysis_to_markdown(analysis, norm or []) if analysis else None
+    if analysis_md:
+        lines.append(f"_Analisis por IA ({brief_ai.provider_label()})_")
         lines.append("")
-        lines.append(highlight_md)
+        lines.append(analysis_md)
     else:
         priority = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
         exec_items = [it for cat in priority for it in items if it["category"] == cat]
@@ -562,34 +410,17 @@ def build_markdown(items, errors, highlight_md=None):
     return "\n".join(lines)
 
 
-def build_html_page(items, errors, highlight_md=None):
+def build_html_page(items, errors, analysis=None, norm=None):
     today_h = dt.datetime.now().strftime("%d/%m/%Y")
     gen_h = dt.datetime.now().strftime("%H:%M")
 
     def esc(s):
         return html.escape(s or "")
 
-    if highlight_md:
-        modo = "Seleccion y analisis por IA"
-        hi_html = []
-        for line in highlight_md.split("\n"):
-            line = line.strip()
-            m = re.match(r"- \*\*\[(.+?)\]\*\* (.+?)\s*$", line)
-            if m:
-                hi_html.append(
-                    f'<li><span class="tag" style="--c:{CAT_COLOR.get(m.group(1), "#555")}">'
-                    f'{esc(m.group(1))}</span> {esc(m.group(2))}'
-                )
-            elif line.startswith("_") and line.endswith("_"):
-                hi_html.append(f'<div class="why">{esc(line.strip("_ "))}</div>')
-            elif line.startswith("[Leer mas]"):
-                mm = re.search(r"\((.+?)\)", line)
-                if mm:
-                    hi_html.append(
-                        f'<a class="more" href="{esc(mm.group(1))}" '
-                        f'target="_blank" rel="noopener">Leer mas &rarr;</a></li>'
-                    )
-        highlight_html = "<ul class='highlights'>" + "\n".join(hi_html) + "</ul>"
+    analysis_html = brief_ai.analysis_to_html(analysis, norm or [], CAT_COLOR) if analysis else None
+    if analysis_html:
+        modo = f"Analisis por IA · {brief_ai.provider_label()}"
+        highlight_html = analysis_html
     else:
         modo = "Seleccion automatica por categoria"
         priority = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
@@ -809,38 +640,60 @@ def main():
     print(f"  {len(items)} items, {len(errors)} fuentes con error", file=sys.stderr)
 
     mark_important(items)
-    print("[traduccion] Traduciendo resumenes al espanol...", file=sys.stderr)
+    print("[traduccion] Traduciendo resumenes al espanol (Google)...", file=sys.stderr)
     add_translations(items)
 
-    highlight_md = None
+    # Lista normalizada para la capa de IA (idx alineado con `items`).
+    norm = [{"idx": i, "category": it["category"], "title": it["title"],
+             "summary": it["summary"], "link": it["link"]}
+            for i, it in enumerate(items)]
+
+    analysis = None
+    use_ai = not args.no_llm and brief_ai.ai_available()
     if args.no_llm:
         print("[modo] simple (forzado por --no-llm)", file=sys.stderr)
-    elif not llm_available():
-        print("[modo] simple (sin ANTHROPIC_API_KEY)", file=sys.stderr)
+    elif not brief_ai.ai_available():
+        print("[modo] simple (sin GROQ_API_KEY)", file=sys.stderr)
     else:
-        print("[modo] intentando destacado por IA...", file=sys.stderr)
-        highlight_md = llm_highlight(items)
-        if highlight_md:
-            print("[modo] IA OK", file=sys.stderr)
-        else:
-            print("[modo] IA no disponible -> fallback a simple", file=sys.stderr)
+        print("[modo] analizando con IA (Groq)...", file=sys.stderr)
+        analysis = brief_ai.analyze(norm, "un CISO / lider de ciberseguridad")
+        print("[modo] IA OK" if analysis else "[modo] IA no disponible -> simple",
+              file=sys.stderr)
 
-    md = build_markdown(items, errors, highlight_md=highlight_md)
+    # --- Salida en ingles (items originales) ---
+    md = build_markdown(items, errors, analysis=analysis, norm=norm)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(md)
     print(f"Informe escrito en {args.out}", file=sys.stderr)
 
-    page = build_html_page(items, errors, highlight_md=highlight_md)
+    page = build_html_page(items, errors, analysis=analysis, norm=norm)
     with open(args.html, "w", encoding="utf-8") as f:
         f.write(page)
     print(f"Pagina web escrita en {args.html}", file=sys.stderr)
 
-    # Version en espanol: usa items ya traducidos por Google Translate (siempre disponible).
-    md_es = build_markdown(items, errors, highlight_md=highlight_md)
+    # --- Salida en espanol: traduccion real de titulo+resumen con IA ---
+    items_es, norm_es = items, norm
+    translations = brief_ai.translate(norm) if use_ai else None
+    if translations:
+        print(f"[es] {len(translations)} items traducidos con IA", file=sys.stderr)
+        items_es = copy.deepcopy(items)
+        for i, it in enumerate(items_es):
+            tr = translations.get(i)
+            if tr:
+                it["title"] = tr["title"] or it["title"]
+                it["summary"] = tr["summary"] or it["summary"]
+                it["summary_es"] = ""  # ya esta todo en ES; evita duplicar
+        norm_es = [{"idx": i, "category": it["category"], "title": it["title"],
+                    "summary": it["summary"], "link": it["link"]}
+                   for i, it in enumerate(items_es)]
+    else:
+        print("[es] sin traduccion IA -> usa resumenes de Google Translate", file=sys.stderr)
+
+    md_es = build_markdown(items_es, errors, analysis=analysis, norm=norm_es)
     with open(args.out_es, "w", encoding="utf-8") as f:
         f.write(md_es)
     print(f"[es] Informe en espanol escrito en {args.out_es}", file=sys.stderr)
-    page_es = build_html_page(items, errors, highlight_md=highlight_md)
+    page_es = build_html_page(items_es, errors, analysis=analysis, norm=norm_es)
     with open(args.html_es, "w", encoding="utf-8") as f:
         f.write(page_es)
     print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)

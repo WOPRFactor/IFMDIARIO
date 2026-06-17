@@ -33,7 +33,8 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
         run: python3 brief.py --out brief.md --out-es brief_es.md --html ia.html --html-es ia_es.html
       - uses: actions/upload-artifact@v4
         with:
@@ -63,7 +64,8 @@ jobs:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO_CYBER: ${{ secrets.MAIL_TO_CYBER }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
         run: python3 brief_cyber.py --out cyber_brief.md --out-es cyber_brief_es.md --html cyber.html --html-es cyber_es.html
       - uses: actions/upload-artifact@v4
         with:
@@ -93,7 +95,8 @@ jobs:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GITHUB_TOKEN: ${{ secrets.GH_SEARCH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
         run: python3 brief_github.py --out github_brief.md --out-es github_brief_es.md --html github.html --html-es github_es.html
       - uses: actions/upload-artifact@v4
         with:
@@ -104,6 +107,33 @@ jobs:
             github.html
             github_es.html
           retention-days: 30
+
+  # --- Email unico con los tres informes ---
+  email:
+    needs: [brief-ia, brief-cyber, brief-github]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Descargar informes
+        uses: actions/download-artifact@v4
+        with:
+          path: _reports
+          merge-multiple: true
+      - name: Enviar email unico
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        # Manda los tres informes juntos. Para recibir las versiones con las
+        # noticias traducidas al espanol, cambia los .md por sus variantes _es.md
+        # (brief_es.md, cyber_brief_es.md, github_brief_es.md).
+        run: python3 send_digest.py _reports/brief.md _reports/cyber_brief.md _reports/github_brief.md
 
   # --- Deploy a GitHub Pages ---
   deploy:

@@ -29,10 +29,11 @@ Corre solo cada dia sin tener la PC prendida. Es gratis.
    | `MAIL_FROM` | `tucuenta@gmail.com`           | Remitente |
    | `MAIL_TO`   | `vos@empresa.com,otro@emp.com` | Destinatarios (coma para varios) |
 
-3. Listo. El informe se envia todos los dias a las **08:00 de Argentina**.
-   Para cambiar el horario, edita la linea `cron` en
-   `.github/workflows/daily-brief.yml` (esta en UTC).
-4. Para probarlo ya mismo: pestana **Actions -> AI Daily Brief -> Run workflow**.
+3. Listo. Cada dia a las **08:00 de Argentina** se generan los tres informes
+   (IA, Ciberseguridad y GitHub) y llegan **juntos en un solo email**
+   (`send_digest.py` los combina). Para cambiar el horario, edita la linea
+   `cron` en `.github/workflows/daily-brief.yml` (esta en UTC).
+4. Para probarlo ya mismo: pestana **Actions -> Daily Briefs -> Run workflow**.
 
 ### Contrasena de aplicacion (Gmail)
 Gmail no acepta tu clave normal por SMTP. Activa la verificacion en 2 pasos y
@@ -87,40 +88,49 @@ que queden caidas.
 
 ---
 
-## Modo IA opcional (destacar y resumir lo mas importante)
+## Modo IA con Groq (analisis, tendencias y traduccion)
 
-El script funciona en dos modos dentro de la **misma ejecucion**:
+Los tres informes comparten una capa de IA (`brief_ai.py`) que usa **Groq**
+(API compatible con OpenAI, muy rapida y con tier gratuito). Funciona en dos
+modos dentro de la **misma ejecucion**:
 
-- **Modo simple** (por defecto): agrupa por categoria y prioriza Regulacion y
-  Vulnerabilidades. No requiere ninguna cuenta ni gasto.
-- **Modo IA**: si detecta una API key de Anthropic, usa Claude (Haiku) para
-  elegir y resumir las 5-7 noticias mas importantes del dia, con una linea de
-  "por que importa" en cada una.
+- **Modo simple** (por defecto, sin key): agrupa por categoria y prioriza lo mas
+  relevante. No requiere ninguna cuenta ni gasto.
+- **Modo IA** (si hay `GROQ_API_KEY`): en **un solo llamado** por informe genera
+  - un **resumen ejecutivo analitico** que conecta las noticias del dia,
+  - **deteccion de tendencias** (agrupa titulares relacionados),
+  - **priorizacion con propuesta de accion** concreta en cada destacada, y
+  - ademas hace una **traduccion real al espanol** (titulo + cuerpo) para las
+    paginas `*_es.html`.
 
-**La gracia:** no hay que elegir uno. Si la key esta presente y hay credito, usa
-IA; si no hay key, si la llamada falla, o si se acabo el credito, **cae solo al
-modo simple** y genera el informe igual. Nunca se rompe ni te deja sin informe.
+**La gracia:** no hay que elegir uno. Si la key esta presente, usa IA; si no hay
+key, si la llamada falla, o si la respuesta no es valida, **cae solo al modo
+simple** y genera el informe igual. Nunca se rompe ni te deja sin informe.
 
 ### Activarlo
-1. Crea una cuenta en https://console.anthropic.com (es gratis crearla).
-   Ojo: **es una cuenta separada del plan Pro/Max de claude.ai** — el plan de
-   chat no incluye acceso a la API.
-2. Carga un poco de credito (con 5 USD te alcanza para cientos de informes) y
-   genera una API key.
-3. En GitHub: **Settings -> Secrets and variables -> Actions** y agrega el
-   secret `ANTHROPIC_API_KEY` con tu key. Listo, el script lo detecta solo.
+1. Crea una cuenta gratis en https://console.groq.com y genera una API key en
+   https://console.groq.com/keys.
+2. En GitHub: **Settings -> Secrets and variables -> Actions** y agrega el
+   secret `GROQ_API_KEY` con tu key. Listo, el script lo detecta solo.
+3. *(Opcional)* Para cambiar de modelo sin tocar codigo, agrega una **variable**
+   (no secret) `LLM_MODEL` en esa misma pantalla. Por defecto usa
+   `llama-3.3-70b-versatile`. Otras opciones en Groq: `openai/gpt-oss-120b`
+   (mas potente), `llama-3.1-8b-instant` (mas barato/rapido), `qwen/qwen3-32b`.
 
-### Control de gasto (importante)
-- El costo real es de **centavos al mes** (cada informe procesa pocos titulares).
-- En la Console de Anthropic podes fijar un **limite de gasto mensual** (tope
-  duro): si se alcanza, la API deja de responder y el script vuelve al modo
-  simple, sin cargos extra.
-- El credito es **prepago**: sin auto-recarga activada, nunca podes gastar mas
-  de lo que cargaste.
-- El script tiene un **tope de tokens por corrida** incorporado
-  (`LLM_MAX_OUTPUT_TOKENS`), asi una sola ejecucion no puede dispararse.
+### Costo
+- El tier gratuito de Groq suele alcanzar de sobra para una corrida diaria de
+  los tres informes. Si sumas volumen, su pricing por token es de los mas bajos.
+- Cada corrida procesa pocos titulares y tiene topes de tokens incorporados, asi
+  una ejecucion no se dispara.
 
 ### Forzar modo simple puntualmente
 ```bash
 python3 brief.py --no-llm        # ignora la key y usa modo simple
+```
+
+### Localmente
+```bash
+export GROQ_API_KEY="gsk_..."        # opcional: activa el modo IA
+export LLM_MODEL="openai/gpt-oss-120b"  # opcional: cambia el modelo
+python3 brief.py
 ```
