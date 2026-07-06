@@ -101,6 +101,7 @@ KEYWORDS = [
 ]
 
 LOOKBACK_HOURS = 48
+LOCAL_LOOKBACK_HOURS = 24 * 15  # ventana mas amplia solo para Local (brechas locales)
 MAX_PER_SOURCE = 5
 USER_AGENT = "Mozilla/5.0 (Cyber-Daily-Brief/1.0)"
 
@@ -348,7 +349,9 @@ def parse_feed(category, name, raw, kind):
 # ----------------------------------------------------------------------------
 
 def collect():
-    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=LOOKBACK_HOURS)
+    now = dt.datetime.now(dt.timezone.utc)
+    cutoff = now - dt.timedelta(hours=LOOKBACK_HOURS)
+    local_cutoff = now - dt.timedelta(hours=LOCAL_LOOKBACK_HOURS)
     all_items = []
     errors = []
 
@@ -356,8 +359,9 @@ def collect():
         try:
             raw = fetch(url)
             feed_items = parse_feed(category, name, raw, kind)
+            cut = local_cutoff if category == "Local" else cutoff
             recent = [it for it in feed_items
-                      if it["date"] is None or it["date"] >= cutoff]
+                      if it["date"] is None or it["date"] >= cut]
             all_items.extend(recent[:MAX_PER_SOURCE])
         except (URLError, HTTPError, TimeoutError) as e:
             errors.append(f"{name}: {e}")
