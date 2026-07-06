@@ -69,8 +69,8 @@ SOURCES = [
 
     # --- Local / LATAM (Argentina) ---
     ("Local", "Segu-Info", "https://blog.segu-info.com.ar/feeds/posts/default", "atom"),
-    ("Local", "WeLiveSecurity ES (ESET LATAM)", "https://www.welivesecurity.com/es/feed/", "rss"),
-    ("Local", "Ransomware.live (victimas)", "https://www.ransomware.live/rss.xml", "rss"),
+    ("Local", "WeLiveSecurity (ESET)", "https://www.welivesecurity.com/feed/", "rss"),
+    ("Local", "Ransomware.live AR (victimas)", "https://api.ransomware.live/countryvictims/AR", "json_ransomlive"),
 ]
 
 # Palabras clave para filtrar feeds generalistas.
@@ -301,9 +301,43 @@ def parse_json_cisa(category, name, raw):
     return items[:MAX_PER_SOURCE]
 
 
+def parse_json_ransomlive(category, name, raw):
+    """Feed JSON de ransomware.live filtrado por pais: victimas de un grupo."""
+    items = []
+    try:
+        data = json.loads(raw)
+    except (ValueError, KeyError):
+        return items
+    vics = data if isinstance(data, list) else data.get("victims", [])
+    for v in vics[:MAX_PER_SOURCE * 4]:
+        victim = clean_text(v.get("post_title") or v.get("website") or "Victima sin nombre")
+        group = clean_text(v.get("group_name") or "desconocido")
+        website = (v.get("website") or "").strip()
+        post_url = (v.get("post_url") or "").strip()
+        if website:
+            link = website if website.startswith("http") else "https://" + website
+        else:
+            link = post_url
+        date = parse_date(v.get("discovered") or v.get("published") or "")
+        desc = clean_text(v.get("description") or "")
+        country = v.get("country") or ""
+        title = f"{victim} — ransomware {group} (victima {country})"
+        items.append({
+            "category": category,
+            "source": name,
+            "title": clean_text(title),
+            "link": link,
+            "summary": desc[:300],
+            "date": date,
+        })
+    return items
+
+
 def parse_feed(category, name, raw, kind):
     if kind == "json_cisa":
         return parse_json_cisa(category, name, raw)
+    if kind == "json_ransomlive":
+        return parse_json_ransomlive(category, name, raw)
     if kind == "nvd":
         return []  # NVD JSON.gz requiere gunzip; omitido para mantener stdlib puro
     return parse_rss_atom(category, name, raw)
