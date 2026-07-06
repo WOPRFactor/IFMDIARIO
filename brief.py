@@ -67,6 +67,10 @@ SOURCES = [
     ("Modelos", "Meta AI Blog", "https://ai.meta.com/blog/rss/", "rss"),
     ("Modelos", "Hugging Face Blog", "https://huggingface.co/blog/feed.xml", "atom"),
     ("Modelos", "Mistral AI News", "https://mistral.ai/news/rss", "rss"),
+
+    # --- Local / LATAM (Argentina) ---
+    ("Local", "Segu-Info", "https://blog.segu-info.com.ar/feeds/posts/default", "atom"),
+    ("Local", "iProUP Innovacion", "https://www.iproup.com/rss/innovacion", "rss"),
 ]
 
 # Palabras clave para decidir si una noticia es relevante.
@@ -83,9 +87,13 @@ KEYWORDS = [
     "release", "launched", "benchmark", "sota", "state of the art",
     "multimodal", "reasoning model", "open source model", "weights",
     "hugging face", "ollama", "fine-tune", "context window",
+    # local / gobernanza AR (espanol)
+    "datos personales", "proteccion de datos", "aaip", "decisiones automatizadas",
+    "sesgo algoritmico", "gobernanza de ia", "regulacion de ia",
 ]
 
 LOOKBACK_HOURS = 48  # ventana de tiempo a considerar
+LOCAL_LOOKBACK_HOURS = 24 * 15  # ventana mas amplia solo para Local
 MAX_PER_SOURCE = 6   # tope de items por fuente para no saturar
 USER_AGENT = "Mozilla/5.0 (AI-Daily-Brief/1.0)"
 
@@ -169,7 +177,7 @@ def translate_batch(texts):
 
 def score_item(item):
     """Puntua la importancia de un item (sin LLM) por categoria, keywords y recencia."""
-    score = {"Regulacion": 3, "Vulnerabilidades": 2, "Gobierno IA": 1, "Tecnologia": 0}.get(
+    score = {"Regulacion": 3, "Local": 3, "Vulnerabilidades": 2, "Gobierno IA": 1, "Tecnologia": 0}.get(
         item["category"], 0)
     blob = f"{item['title']} {item['summary']}".lower()
     score += sum(1 for kw in IMPORTANT_KEYWORDS if kw in blob)
@@ -263,7 +271,9 @@ def parse_feed(category, name, raw, kind):
 
 def collect():
     """Recorre todas las fuentes y devuelve items dentro de la ventana de tiempo."""
-    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=LOOKBACK_HOURS)
+    now = dt.datetime.now(dt.timezone.utc)
+    cutoff = now - dt.timedelta(hours=LOOKBACK_HOURS)
+    local_cutoff = now - dt.timedelta(hours=LOCAL_LOOKBACK_HOURS)
     all_items = []
     errors = []
 
@@ -272,8 +282,9 @@ def collect():
             raw = fetch(url)
             feed_items = parse_feed(category, name, raw, kind)
             # filtra por fecha (si hay fecha; si no, lo incluye igual)
+            cut = local_cutoff if category == "Local" else cutoff
             recent = [it for it in feed_items
-                      if it["date"] is None or it["date"] >= cutoff]
+                      if it["date"] is None or it["date"] >= cut]
             all_items.extend(recent[:MAX_PER_SOURCE])
         except (URLError, HTTPError, TimeoutError) as e:
             errors.append(f"{name}: {e}")
@@ -298,8 +309,9 @@ def build_markdown(items, errors, analysis=None, norm=None):
     ejecutivo con IA; si es None, se arma el resumen simple por prioridad.
     """
     today = dt.datetime.now().strftime("%Y-%m-%d")
-    order = ["Modelos", "Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
+    order = ["Local", "Modelos", "Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
     titles = {
+        "Local":            "Local / LATAM (Argentina)",
         "Modelos":          "Nuevos modelos y releases",
         "Regulacion":       "Regulacion y leyes",
         "Gobierno IA":      "Gobierno de IA",
@@ -322,7 +334,7 @@ def build_markdown(items, errors, analysis=None, norm=None):
         lines.append("")
         lines.append(analysis_md)
     else:
-        priority = ["Regulacion", "Vulnerabilidades", "Gobierno IA", "Tecnologia"]
+        priority = ["Local", "Regulacion", "Vulnerabilidades", "Gobierno IA", "Tecnologia"]
         exec_items = []
         for cat in priority:
             for it in items:
@@ -381,8 +393,9 @@ def build_html_page(items, errors, analysis=None, norm=None):
     """
     today_h = dt.datetime.now().strftime("%d/%m/%Y")
     gen_h = dt.datetime.now().strftime("%H:%M")
-    order = ["Modelos", "Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
+    order = ["Local", "Modelos", "Regulacion", "Gobierno IA", "Vulnerabilidades", "Tecnologia"]
     titles = {
+        "Local":            "Local / LATAM (Argentina)",
         "Modelos":          "Nuevos modelos y releases",
         "Regulacion":       "Regulacion y leyes",
         "Gobierno IA":      "Gobierno de IA",
@@ -391,6 +404,7 @@ def build_html_page(items, errors, analysis=None, norm=None):
     }
     # color de acento por categoria (sobrio, no semaforo chillon)
     cat_color = {
+        "Local":            "#2f9e44",
         "Modelos":          "#e67700",
         "Regulacion":       "#3b5bdb",
         "Gobierno IA":      "#0c8599",
@@ -408,7 +422,7 @@ def build_html_page(items, errors, analysis=None, norm=None):
         highlight_html = analysis_html
     else:
         modo = "Seleccion automatica por categoria"
-        priority = ["Regulacion", "Vulnerabilidades", "Gobierno IA", "Tecnologia"]
+        priority = ["Local", "Regulacion", "Vulnerabilidades", "Gobierno IA", "Tecnologia"]
         exec_items = [it for cat in priority for it in items if it["category"] == cat][:5]
         if exec_items:
             lis = []
