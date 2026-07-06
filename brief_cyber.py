@@ -66,6 +66,11 @@ SOURCES = [
     ("Vendors", "Fortinet PSIRT Advisories", "https://www.fortiguard.com/rss/psirt.xml", "rss"),
     ("Vendors", "Check Point Blog", "https://blog.checkpoint.com/feed/", "rss"),
     ("Vendors", "Check Point Research", "https://research.checkpoint.com/feed/", "rss"),
+
+    # --- Local / LATAM (Argentina) ---
+    ("Local", "Segu-Info", "https://blog.segu-info.com.ar/feeds/posts/default", "atom"),
+    ("Local", "WeLiveSecurity ES (ESET LATAM)", "https://www.welivesecurity.com/es/feed/", "rss"),
+    ("Local", "Ransomware.live (victimas)", "https://www.ransomware.live/rss.xml", "rss"),
 ]
 
 # Palabras clave para filtrar feeds generalistas.
@@ -90,6 +95,9 @@ KEYWORDS = [
     "cybersecurity", "ciberseguridad", "infosec", "pentest", "red team",
     "incident response", "soc", "siem", "ioc", "ttps", "mitre",
     "supply chain", "third-party", "firmware",
+    # local / LATAM (espanol) -- ayudan a surfacear noticias regionales
+    "argentina", "latam", "filtracion", "filtración", "brecha", "fuga de datos",
+    "robo de datos", "secuestro de datos", "estafa", "extorsion", "extorsión",
 ]
 
 LOOKBACK_HOURS = 48
@@ -170,7 +178,7 @@ def translate_batch(texts):
 
 
 def score_item(item):
-    score = {"Alertas": 4, "Vulnerabilidades": 3, "Amenazas": 2, "Vendors": 1, "Noticias": 0}.get(
+    score = {"Alertas": 4, "Vulnerabilidades": 3, "Local": 3, "Amenazas": 2, "Vendors": 1, "Noticias": 0}.get(
         item["category"], 0)
     blob = f"{item['title']} {item['summary']}".lower()
     score += sum(1 for kw in IMPORTANT_KEYWORDS if kw in blob)
@@ -223,8 +231,14 @@ def parse_rss_atom(category, name, raw):
         if is_atom:
             ns = {"a": "http://www.w3.org/2005/Atom"}
             title = node.findtext("a:title", default="", namespaces=ns)
-            link_el = node.find("a:link", ns)
-            link = link_el.get("href") if link_el is not None else ""
+            link = ""
+            for link_el in node.findall("a:link", ns):
+                if link_el.get("rel") in (None, "alternate"):
+                    link = link_el.get("href") or ""
+                    break
+            if not link:
+                first = node.find("a:link", ns)
+                link = first.get("href") if first is not None else ""
             summary = (node.findtext("a:summary", default="", namespaces=ns) or
                        node.findtext("a:content", default="", namespaces=ns))
             date_txt = (node.findtext("a:updated", default="", namespaces=ns) or
@@ -241,7 +255,8 @@ def parse_rss_atom(category, name, raw):
 
         if not title:
             continue
-        if not is_relevant(title, summary):
+        # Las fuentes locales ya son 100% de seguridad: no filtramos por keywords.
+        if category != "Local" and not is_relevant(title, summary):
             continue
 
         items.append({
@@ -330,10 +345,11 @@ def collect():
 # GENERACION DEL INFORME
 # ----------------------------------------------------------------------------
 
-ORDER = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
+ORDER = ["Alertas", "Vulnerabilidades", "Local", "Amenazas", "Vendors", "Noticias"]
 TITLES = {
     "Alertas":         "Alertas oficiales",
     "Vulnerabilidades": "Vulnerabilidades y exploits",
+    "Local":           "Local / LATAM (Argentina)",
     "Amenazas":        "Threat intelligence",
     "Vendors":         "Novedades de vendors",
     "Noticias":        "Noticias generales",
@@ -341,6 +357,7 @@ TITLES = {
 CAT_COLOR = {
     "Alertas":         "#c92a2a",
     "Vulnerabilidades": "#e67700",
+    "Local":           "#0b7285",
     "Amenazas":        "#862e9c",
     "Vendors":         "#1864ab",
     "Noticias":        "#2b8a3e",
@@ -363,7 +380,7 @@ def build_markdown(items, errors, analysis=None, norm=None):
         lines.append("")
         lines.append(analysis_md)
     else:
-        priority = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
+        priority = ["Alertas", "Vulnerabilidades", "Local", "Amenazas", "Vendors", "Noticias"]
         exec_items = [it for cat in priority for it in items if it["category"] == cat]
         if exec_items:
             for it in exec_items[:6]:
@@ -423,7 +440,7 @@ def build_html_page(items, errors, analysis=None, norm=None):
         highlight_html = analysis_html
     else:
         modo = "Seleccion automatica por categoria"
-        priority = ["Alertas", "Vulnerabilidades", "Amenazas", "Vendors", "Noticias"]
+        priority = ["Alertas", "Vulnerabilidades", "Local", "Amenazas", "Vendors", "Noticias"]
         exec_items = [it for cat in priority for it in items if it["category"] == cat][:6]
         if exec_items:
             lis = [
