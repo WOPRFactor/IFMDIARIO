@@ -58,6 +58,7 @@ SOURCES = [
     ("Amenazas", "Recorded Future Blog", "https://www.recordedfuture.com/feed", "rss"),
     ("Amenazas", "Securelist (Kaspersky)", "https://securelist.com/feed/", "rss"),
     ("Amenazas", "Mandiant Blog", "https://www.mandiant.com/resources/blog/rss.xml", "rss"),
+    ("Amenazas", "Cyber Security News", "https://cybersecuritynews.com/feed/", "rss"),
 
     # --- Vendors ---
     ("Vendors", "Cisco Talos Blog", "https://blog.talosintelligence.com/feeds/posts/default", "atom"),
