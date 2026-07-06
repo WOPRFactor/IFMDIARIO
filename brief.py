@@ -69,7 +69,6 @@ SOURCES = [
     ("Modelos", "Mistral AI News", "https://mistral.ai/news/rss", "rss"),
 
     # --- Local / LATAM (Argentina) ---
-    ("Local", "Segu-Info", "https://blog.segu-info.com.ar/feeds/posts/default", "atom"),
     ("Local", "iProUP Innovacion", "https://www.iproup.com/rss/innovacion", "rss"),
 ]
 
@@ -148,6 +147,7 @@ def clean_text(s):
         return ""
     s = re.sub(r"<[^>]+>", "", s)
     s = html.unescape(s)
+    s = re.sub(r"\(function\(i,s,o,g,r,a,m\).*", "", s)  # saca JS de Analytics
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
