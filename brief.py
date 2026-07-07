@@ -147,7 +147,7 @@ def clean_text(s):
         return ""
     s = re.sub(r"<[^>]+>", "", s)
     s = html.unescape(s)
-    s = re.sub(r"\s*(\(function\(i,s,o,g,r,a,m\)|ga\('create'|window\._gaq|_gaq\.push).*", "", s)  # saca JS de Analytics (varias variantes)
+    s = re.sub(r"(\(function\(|ga\('|window\._gaq|_gaq\.push|gtag\().*", "", s, flags=re.DOTALL)  # saca JS de Analytics (todas las variantes, multilinea)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
