@@ -64,6 +64,52 @@ SEARCHES = [
      "malware OR ransomware OR \"reverse engineering\" OR \"threat intel\" stars:>20"),
 ]
 
+# ----------------------------------------------------------------------------
+# SETS DE CATEGORIAS (3 corridas). Se elige con --set. Cada entrada:
+# (categoria/tipo, etiqueta, query GitHub Search)
+# ----------------------------------------------------------------------------
+SETS = {
+    "ofensiva": {
+        "order": ["Ofensivo", "Inteligencia"],
+        "colors": {"Ofensivo": "#c92a2a", "Inteligencia": "#0c8599"},
+        "searches": [
+            ("Ofensivo", "Pentesting", 'pentest OR "penetration testing" OR pentesting stars:>150'),
+            ("Ofensivo", "Red team / C2", '"red team" OR "adversary emulation" OR "c2 framework" OR redteam stars:>100'),
+            ("Ofensivo", "Exploitation / vuln research", 'exploit OR "proof of concept" OR poc OR fuzzing stars:>150'),
+            ("Ofensivo", "Phishing / ingenieria social", 'phishing OR "social engineering" OR evilginx OR gophish stars:>80'),
+            ("Ofensivo", "Web / API / AppSec", '"web security" OR appsec OR "api security" OR "bug bounty" stars:>150'),
+            ("Inteligencia", "OSINT", 'osint OR "open source intelligence" stars:>150'),
+            ("Inteligencia", "CTI / Threat Intel", '"threat intelligence" OR "cyber threat" OR "threat feed" OR ioc stars:>80'),
+            ("Inteligencia", "ASM / recon", '"attack surface" OR reconnaissance OR "subdomain enumeration" OR "asset discovery" stars:>100'),
+            ("Inteligencia", "Leak / dark-web", '"dark web" OR "leak detection" OR "credential leak" OR "breach data" stars:>50'),
+        ],
+    },
+    "defensa": {
+        "order": ["Deteccion", "DFIR & Malware"],
+        "colors": {"Deteccion": "#2b8a3e", "DFIR & Malware": "#e8590c"},
+        "searches": [
+            ("Deteccion", "Deteccion / Blue team", 'sigma OR "detection engineering" OR "blue team" OR "detection rules" stars:>80'),
+            ("Deteccion", "Threat hunting", '"threat hunting" OR threathunting stars:>50'),
+            ("Deteccion", "SIEM / SOC", 'siem OR "security operations center" OR "soc automation" stars:>80'),
+            ("Deteccion", "Honeypots / decepcion", 'honeypot OR deception OR honeytoken stars:>50'),
+            ("DFIR & Malware", "DFIR / respuesta a incidentes", 'dfir OR "incident response" OR "digital forensics" OR forensics stars:>80'),
+            ("DFIR & Malware", "Malware analysis / reversing", '"malware analysis" OR "reverse engineering" stars:>100'),
+        ],
+    },
+    "ia": {
+        "order": ["IA & Seguridad", "Gobernanza & Datos"],
+        "colors": {"IA & Seguridad": "#3b5bdb", "Gobernanza & Datos": "#0c8599"},
+        "searches": [
+            ("IA & Seguridad", "AI security / LLM red-team", '"llm security" OR "prompt injection" OR "ai red team" OR "ai security" stars:>50'),
+            ("IA & Seguridad", "IA / LLM tooling", '"ai agent" OR langgraph OR crewai OR "llm framework" stars:>300'),
+            ("Gobernanza & Datos", "Gobernanza de IA", '"ai governance" OR "responsible ai" OR "ml governance" OR "iso 42001" stars:>30'),
+            ("Gobernanza & Datos", "GRC / compliance", 'grc OR "compliance as code" OR "security compliance" stars:>80'),
+            ("Gobernanza & Datos", "Privacidad / anonimizacion", 'privacy OR anonymization OR "data anonymization" OR pii stars:>100'),
+            ("Gobernanza & Datos", "Criptografia", 'cryptography OR encryption OR "post-quantum" stars:>200'),
+        ],
+    },
+}
+
 LOOKBACK_DAYS = 7       # ventana: repos creados o actualizados en los ultimos N dias
 MAX_PER_SEARCH = 5      # tope de repos por busqueda
 DELAY_BETWEEN_REQUESTS = 7  # segundos entre requests para respetar rate limit
@@ -523,9 +569,15 @@ def main():
                         help="archivo HTML en espanol")
     parser.add_argument("--json", default="",
                         help="exporta los repos a JSON (insumo del informe ejecutivo)")
+    parser.add_argument("--set", dest="cat_set", default="ofensiva",
+                        choices=["ofensiva", "defensa", "ia"],
+                        help="conjunto de categorias a buscar")
     parser.add_argument("--no-llm", action="store_true",
                         help="modo simple sin IA")
     args = parser.parse_args()
+    global SEARCHES, ORDER, CAT_COLOR
+    _sel = SETS[args.cat_set]
+    SEARCHES, ORDER, CAT_COLOR = _sel["searches"], _sel["order"], _sel["colors"]
 
     print("Buscando repositorios en GitHub...", file=sys.stderr)
     repos, errors = collect()
