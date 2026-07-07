@@ -75,11 +75,11 @@ SETS = {
         "searches": [
             ("Ofensivo", "Pentesting", 'pentest OR "penetration testing" OR pentesting stars:>150'),
             ("Ofensivo", "Red team / C2", '"red team" OR "adversary emulation" OR "c2 framework" OR redteam stars:>100'),
-            ("Ofensivo", "Exploitation / vuln research", 'exploit OR "proof of concept" OR poc OR fuzzing stars:>150'),
+            ("Ofensivo", "Exploitation / vuln research", 'exploit OR "proof of concept" OR "exploit development" OR fuzzing stars:>150'),
             ("Ofensivo", "Phishing / ingenieria social", 'phishing OR "social engineering" OR evilginx OR gophish stars:>80'),
             ("Ofensivo", "Web / API / AppSec", '"web security" OR appsec OR "api security" OR "bug bounty" stars:>150'),
             ("Inteligencia", "OSINT", 'osint OR "open source intelligence" stars:>150'),
-            ("Inteligencia", "CTI / Threat Intel", '"threat intelligence" OR "cyber threat" OR "threat feed" OR ioc stars:>80'),
+            ("Inteligencia", "CTI / Threat Intel", '"threat intelligence" OR "cyber threat" OR "threat feed" OR "indicators of compromise" stars:>80'),
             ("Inteligencia", "ASM / recon", '"attack surface" OR reconnaissance OR "subdomain enumeration" OR "asset discovery" stars:>100'),
             ("Inteligencia", "Leak / dark-web", '"dark web" OR "leak detection" OR "credential leak" OR "breach data" stars:>50'),
         ],

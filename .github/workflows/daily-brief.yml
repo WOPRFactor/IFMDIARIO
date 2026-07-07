@@ -79,8 +79,8 @@ jobs:
             cyber_items.json
           retention-days: 30
 
-  # --- Informe GitHub Repos ---
-  brief-github:
+  # --- Herramientas GitHub: Ofensiva e Inteligencia ---
+  brief-github-ofensiva:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,32 +88,78 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install deep-translator
-      - name: Generar informe GitHub Repos
+      - name: Generar herramientas Ofensiva e Inteligencia
         env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
           GITHUB_TOKEN: ${{ secrets.GH_SEARCH_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
-        run: python3 brief_github.py --out github_brief.md --out-es github_brief_es.md --html github.html --html-es github_es.html --json github_items.json
+        run: python3 brief_github.py --set ofensiva --out github_ofensiva_brief.md --out-es github_ofensiva_brief_es.md --html github_ofensiva.html --html-es github_ofensiva_es.html --json github_ofensiva_items.json
       - uses: actions/upload-artifact@v4
         with:
-          name: brief-github
+          name: brief-github-ofensiva
           path: |
-            github_brief.md
-            github_brief_es.md
-            github.html
-            github_es.html
-            github_items.json
+            github_ofensiva_brief.md
+            github_ofensiva_brief_es.md
+            github_ofensiva.html
+            github_ofensiva_es.html
+            github_ofensiva_items.json
+          retention-days: 30
+
+  # --- Herramientas GitHub: Defensa / DFIR ---
+  brief-github-defensa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install deep-translator
+      - name: Generar herramientas Defensa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_SEARCH_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: python3 brief_github.py --set defensa --out github_defensa_brief.md --out-es github_defensa_brief_es.md --html github_defensa.html --html-es github_defensa_es.html --json github_defensa_items.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brief-github-defensa
+          path: |
+            github_defensa_brief.md
+            github_defensa_brief_es.md
+            github_defensa.html
+            github_defensa_es.html
+            github_defensa_items.json
+          retention-days: 30
+
+  # --- Herramientas GitHub: IA, Gobernanza y Datos ---
+  brief-github-iatools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install deep-translator
+      - name: Generar herramientas IA y Gobernanza
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_SEARCH_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: python3 brief_github.py --set ia --out github_iatools_brief.md --out-es github_iatools_brief_es.md --html github_iatools.html --html-es github_iatools_es.html --json github_iatools_items.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brief-github-iatools
+          path: |
+            github_iatools_brief.md
+            github_iatools_brief_es.md
+            github_iatools.html
+            github_iatools_es.html
+            github_iatools_items.json
           retention-days: 30
 
   # --- Informe ejecutivo + email unico ---
   resumen:
-    needs: [brief-ia, brief-cyber, brief-github]
+    needs: [brief-ia, brief-cyber, brief-github-ofensiva, brief-github-defensa, brief-github-iatools]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -129,7 +175,7 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
-        run: python3 brief_exec.py --out resumen.html --out-md _reports/_exec.md _reports/brief_items.json _reports/cyber_items.json _reports/github_items.json
+        run: python3 brief_exec.py --out resumen.html --out-md _reports/_exec.md _reports/brief_items.json _reports/cyber_items.json _reports/github_ofensiva_items.json _reports/github_defensa_items.json _reports/github_iatools_items.json
       - uses: actions/upload-artifact@v4
         with:
           name: resumen
@@ -146,11 +192,11 @@ jobs:
         # El _exec.md va primero -> el email arranca con el resumen ejecutivo.
         # Para recibir las noticias traducidas al espanol, cambia los .md por sus
         # variantes _es.md (brief_es.md, cyber_brief_es.md, github_brief_es.md).
-        run: python3 send_digest.py _reports/_exec.md _reports/brief.md _reports/cyber_brief.md _reports/github_brief.md
+        run: python3 send_digest.py _reports/_exec.md _reports/brief.md _reports/cyber_brief.md _reports/github_ofensiva_brief.md _reports/github_defensa_brief.md _reports/github_iatools_brief.md
 
   # --- Deploy a GitHub Pages ---
   deploy:
-    needs: [brief-ia, brief-cyber, brief-github, resumen]
+    needs: [brief-ia, brief-cyber, brief-github-ofensiva, brief-github-defensa, brief-github-iatools, resumen]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

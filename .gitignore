@@ -8,3 +8,7 @@ __pycache__/
 brief_es.md
 *.html
 !portal.html
+
+# Informe interno privado (NO publicar)
+afectados_ar.json
+afectados_ar.md
