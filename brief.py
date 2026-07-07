@@ -76,7 +76,7 @@ SOURCES = [
 # Si una fuente ya es 100% de IA, su contenido pasa igual; estas keywords
 # se usan sobre todo para filtrar feeds generalistas (seguridad, tech).
 KEYWORDS = [
-    "ai", "a.i.", "artificial intelligence", "inteligencia artificial",
+    "ai", "ia", "a.i.", "artificial intelligence", "inteligencia artificial",
     "machine learning", "llm", "gpt", "genai", "generative",
     "prompt injection", "model", "ml ", "deepfake", "neural",
     "openai", "anthropic", "gemini", "claude", "mistral", "llama",
@@ -147,7 +147,7 @@ def clean_text(s):
         return ""
     s = re.sub(r"<[^>]+>", "", s)
     s = html.unescape(s)
-    s = re.sub(r"\(function\(i,s,o,g,r,a,m\).*", "", s)  # saca JS de Analytics
+    s = re.sub(r"\s*(\(function\(i,s,o,g,r,a,m\)|ga\('create'|window\._gaq|_gaq\.push).*", "", s)  # saca JS de Analytics (varias variantes)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -213,7 +213,13 @@ def is_relevant(source_name, title, summary):
     generalistas (seguridad, tech) solo dejan pasar lo que menciona IA/ML.
     """
     blob = f"{title} {summary}".lower()
-    return any(kw in blob for kw in KEYWORDS)
+    for kw in KEYWORDS:
+        if kw.isalpha() and len(kw) <= 3:
+            if re.search(r"\b" + re.escape(kw) + r"\b", blob):
+                return True
+        elif kw in blob:
+            return True
+    return False
 
 
 def parse_feed(category, name, raw, kind):
