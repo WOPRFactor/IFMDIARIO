@@ -661,6 +661,7 @@ def main():
     parser.add_argument("--html", default="productos.html", help="HTML para GitHub Pages")
     parser.add_argument("--html-es", default="productos_es.html", help="HTML en espanol")
     parser.add_argument("--no-llm", action="store_true", help="modo simple sin IA")
+    parser.add_argument("--json", default=None, help="JSON de items de salida")
     args = parser.parse_args()
 
     print("Recolectando novedades del ecosistema IA...", file=sys.stderr)
@@ -703,6 +704,19 @@ def main():
     with open(args.html_es, "w", encoding="utf-8") as f:
         f.write(page_es)
     print(f"[es] Pagina web en espanol escrita en {args.html_es}", file=sys.stderr)
+
+    if args.json:
+        import json as _json
+        with open(args.json, "w", encoding="utf-8") as f:
+            _json.dump([{
+                "title": i.get("title", ""),
+                "url": i.get("url", ""),
+                "category": i.get("category", ""),
+                "score": i.get("score", 0),
+                "important": i.get("important", False),
+                "summary": i.get("summary", ""),
+            } for i in items], f, ensure_ascii=False, indent=2)
+        print(f"JSON escrito en {args.json}", file=sys.stderr)
 
     if args.email:
         today = dt.datetime.now().strftime("%Y-%m-%d")
