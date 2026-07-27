@@ -157,9 +157,34 @@ jobs:
             github_iatools_items.json
           retention-days: 30
 
+  # --- Informe Productos AI ---
+  brief-productos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install deep-translator
+      - name: Generar informe Productos AI
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: python3 brief_productos.py --out productos_brief.md --out-es productos_brief_es.md --html productos.html --html-es productos_es.html --json productos_items.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brief-productos
+          path: |
+            productos_brief.md
+            productos_brief_es.md
+            productos.html
+            productos_es.html
+            productos_items.json
+          retention-days: 30
+
   # --- Informe ejecutivo + email unico ---
   resumen:
-    needs: [brief-ia, brief-cyber, brief-github-ofensiva, brief-github-defensa, brief-github-iatools]
+    needs: [brief-ia, brief-cyber, brief-github-ofensiva, brief-github-defensa, brief-github-iatools, brief-productos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +221,7 @@ jobs:
 
   # --- Deploy a GitHub Pages ---
   deploy:
-    needs: [brief-ia, brief-cyber, brief-github-ofensiva, brief-github-defensa, brief-github-iatools, resumen]
+    needs: [brief-ia, brief-cyber, brief-github-ofensiva, brief-github-defensa, brief-github-iatools, brief-productos, resumen]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
